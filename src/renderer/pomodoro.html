@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Pomodoro</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+  .top .seg button { padding: 3px 9px; }
+  .top .icon-btn { flex: none; }
+  .ring { position: relative; flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; }
+  .ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ring .track { stroke: var(--fill2); }
+  .ring .bar { transition: stroke-dashoffset .25s linear, stroke .2s; stroke-linecap: round; }
+  .mid { position: relative; text-align: center; line-height: 1; }
+  .mid .t { font-family: var(--font-display); font-size: min(23cqmin, 54px); font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .mid .s { margin-top: 4px; font-size: 12px; color: var(--fg2); }
+  @container (max-height: 110px) { .mid .s { display: none; } }
+  .subj { align-self: center; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; margin-top: 4px; padding: 4px 10px 4px 9px; border-radius: 999px; background: var(--fill); font-size: 13px; font-weight: 500; }
+  .subj:hover { background: var(--fill2); }
+  .subj i { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+  .subj span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subj svg { flex: none; width: 10px; height: 10px; color: var(--fg2); }
+  .ctl { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 8px; }
+  .ctl .sm { width: 32px; height: 32px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; color: var(--fg); }
+  .ctl .sm:hover { background: var(--fill2); }
+  .ctl .sm:disabled { opacity: .35; cursor: default; }
+  .ctl .sm svg { width: 14px; height: 14px; }
+  .ctl .go { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: #fff; transition: background .2s; }
+  .ctl .go svg { width: 20px; height: 20px; }
+  .ctl .go:hover { filter: brightness(1.08); }
+  .ctl .go:active, .ctl .sm:active { transform: scale(.94); }
+  .foot { display: flex; justify-content: center; align-items: center; gap: 5px; height: 14px; margin-top: 8px; font-size: 11.5px; color: var(--fg2); }
+  .foot .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--fill2); }
+  .foot .dots i.on { background: var(--c); }
+  .foot button { margin-left: 6px; color: inherit; font-variant-numeric: tabular-nums; }
+  .foot button:hover { color: var(--fg); }
+  .sum { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .sum .hd { display: flex; align-items: baseline; justify-content: space-between; margin: 2px 0 6px; }
+  .sum .hd b { font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .sum .hd span { font-size: 12px; color: var(--fg2); }
+  .sum .wk { margin: 0 0 6px; padding-bottom: 8px; border-bottom: 1px solid var(--sep); }
+  .sum .wk .t { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--fg2); font-variant-numeric: tabular-nums; }
+  .sum .wk.reached .t { color: var(--green); font-weight: 600; }
+  .sum .wk .b { height: 4px; margin-top: 5px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+  .sum .wk .b u { display: block; height: 100%; border-radius: 2px; text-decoration: none; transition: width .25s; }
+  .sum .wk.nogoal .b { display: none; }
+  .sum .rows { flex: 1; min-height: 0; }
+  .row { padding: 5px 0; }
+  .row .l { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .row .l i { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+  .row .l .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .row .l .v { font-variant-numeric: tabular-nums; color: var(--fg2); }
+  .row .b { height: 4px; margin: 4px 0 0 17px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+  .row .b u { display: block; height: 100%; border-radius: 2px; text-decoration: none; transition: width .25s; }
+  .sum .none { padding: 26px 0; color: var(--fg2); font-size: 13px; text-align: center; line-height: 1.5; }
+  .sum .ses { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--sep); display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg2); }
+  .sum .ses span { flex: 1; min-width: 0; }
+  .sum .ses button { padding: 4px 11px; border-radius: 999px; background: var(--fill); color: var(--fg); font-weight: 600; font-size: 12px; }
+  .sum .ses button:hover { background: var(--fill2); }
+  .sum .ses button:disabled { opacity: .4; cursor: default; }
+  .result { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 12px; background: rgba(0, 0, 0, .3); border-radius: 22px; }
+  .result .box { width: 100%; max-height: 100%; overflow: auto; padding: 14px; border-radius: 16px; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0, 0, 0, .3); text-shadow: none; }
+  .result h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--fg2); text-transform: uppercase; letter-spacing: .05em; }
+  .result .big { font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -.02em; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+  .result .meta { font-size: 12px; color: var(--fg2); margin-bottom: 6px; }
+  .result .ok { margin-top: 10px; width: 100%; padding: 7px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .foot .dots { display: inline-flex; gap: 5px; }
+</style>
+</head>
+<body>
+<div class="card" id="card"></div>
+<script src="../shared/color.js"></script>
+<script src="../shared/appearance.js"></script>
+<script src="../shared/wall-layout.js"></script>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="common.js"></script>
+<script src="pomodoro.js"></script>
+</body>
+</html>

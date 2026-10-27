@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Folders</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  .head { display: flex; align-items: center; margin-bottom: 4px; }
+  .head .ttl { flex: 1; font-size: 15px; font-weight: 700; }
+  .grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); grid-auto-rows: min-content; gap: 4px 2px; align-content: start; margin: 0 -6px; padding: 4px 6px; }
+  .it { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px 4px; border-radius: 10px; min-width: 0; }
+  .it:hover { background: var(--fill); }
+  .it:active { background: var(--fill2); }
+  .it .ic { width: 44px; height: 44px; display: grid; place-items: center; }
+  .it .ic svg, .it .ic img { width: 44px; height: 44px; object-fit: contain; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .25)); }
+  .it .ic img.file { width: 36px; height: 36px; }
+  .it.missing .ic { opacity: .4; }
+  .it .nm { width: 100%; font-size: 11.5px; line-height: 1.2; text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .empty { grid-column: 1 / -1; margin: auto; text-align: center; color: var(--fg2); font-size: 13px; padding: 14px 8px; white-space: pre-line; }
+  .it .nm .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .25); }
+  body.over .card { box-shadow: inset 0 0 0 2px var(--accent); }
+  :root { --lbl: #1c1c1e; --lbl-shadow: 0 1px 2px rgba(255, 255, 255, .85), 0 0 1px rgba(255, 255, 255, .7); --lbl-hover: rgba(0, 0, 0, .08); --lbl-active: rgba(0, 0, 0, .14); --lbl-btn-bg: rgba(255, 255, 255, .6); --lbl-btn-fg: #1c1c1e; }
+  :root[data-scheme="dark"] { --lbl: #fff; --lbl-shadow: 0 1px 3px rgba(0, 0, 0, .7), 0 0 1px rgba(0, 0, 0, .55); --lbl-hover: rgba(255, 255, 255, .16); --lbl-active: rgba(255, 255, 255, .26); --lbl-btn-bg: rgba(0, 0, 0, .38); --lbl-btn-fg: #fff; }
+  body[data-mode="bare"][data-widget="folders"] .surface { display: none; }
+  body[data-mode="bare"][data-widget="folders"] .card { padding: 8px 8px 10px; }
+  body[data-mode="bare"][data-widget="folders"] .head { position: absolute; top: 6px; right: 8px; z-index: 5; margin: 0; opacity: 0; transition: opacity .15s; }
+  body[data-mode="bare"][data-widget="folders"]:hover .head { opacity: 1; }
+  body[data-mode="bare"][data-widget="folders"] .head .ttl { display: none; }
+  body[data-mode="bare"][data-widget="folders"] .head .icon-btn { background: var(--lbl-btn-bg); color: var(--lbl-btn-fg); }
+  body[data-mode="bare"][data-widget="folders"] .grid { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px 2px; }
+  body[data-mode="bare"][data-widget="folders"] .it { gap: 5px; padding: 7px 2px 5px; }
+  body[data-mode="bare"][data-widget="folders"] .it:hover { background: var(--lbl-hover); }
+  body[data-mode="bare"][data-widget="folders"] .it:active { background: var(--lbl-active); }
+  body[data-mode="bare"][data-widget="folders"] .it .ic, body[data-mode="bare"][data-widget="folders"] .it .ic svg, body[data-mode="bare"][data-widget="folders"] .it .ic img { width: 56px; height: 56px; }
+  body[data-mode="bare"][data-widget="folders"] .it .ic img.file { width: 46px; height: 46px; }
+  body[data-mode="bare"][data-widget="folders"] .it .nm { color: var(--lbl); font-size: 12px; font-weight: 600; text-shadow: var(--lbl-shadow); }
+  body[data-mode="bare"][data-widget="folders"] .empty { color: var(--lbl); text-shadow: var(--lbl-shadow); }
+</style>
+</head>
+<body>
+<div class="card" id="card"></div>
+<script src="../shared/color.js"></script>
+<script src="../shared/appearance.js"></script>
+<script src="../shared/wall-layout.js"></script>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="common.js"></script>
+<script src="folders.js"></script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Weather</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  .card { padding: 14px 16px; }
+  .now { display: flex; align-items: flex-start; gap: 8px; }
+  .now .l { flex: 1; min-width: 0; }
+  .now .city { font-size: 15px; font-weight: 700; line-height: 1.25; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .now .city .busy { display: inline-block; width: 10px; height: 10px; margin-left: 5px; vertical-align: -1px; border-radius: 50%; border: 2px solid var(--fg3); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  .now .temp { font-family: var(--font-display); font-size: 46px; font-weight: 300; line-height: 1.02; letter-spacing: -.03em; margin-top: 2px; }
+  .now .r { text-align: right; flex: none; }
+  .now .r svg { width: 44px; height: 44px; display: block; margin-left: auto; }
+  .now .cond { font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+  .now .hl { font-size: 12px; color: var(--fg2); margin-top: 1px; }
+  .details { display: flex; justify-content: space-between; gap: 6px; margin-top: 8px; }
+  .details .c { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .details svg { width: 15px; height: 15px; flex: none; color: var(--fg2); }
+  .details .c > div { min-width: 0; line-height: 1.2; }
+  .details small { display: block; font-size: 10.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .details b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .modal.picker { max-width: 300px; }
+  .places { display: flex; flex-direction: column; gap: 2px; max-height: calc(100vh - 120px); min-height: 40px; overflow-y: auto; margin: 0 -4px; }
+  .place { display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: 8px; }
+  .place:hover, .place:focus-visible { background: var(--fill); outline: 0; }
+  .place b { display: block; font-weight: 600; }
+  .place small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hours { display: flex; justify-content: space-between; gap: 2px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--sep); }
+  .hours .h:first-child { flex: 1.7; white-space: nowrap; }
+  .hours .h { flex: 1; min-width: 0; text-align: center; font-size: 11.5px; color: var(--fg2); }
+  .hours .h svg { width: 22px; height: 22px; display: block; margin: 3px auto; }
+  .hours .h b { display: block; color: var(--fg); font-weight: 600; font-size: 13px; }
+  .days { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--sep); flex: 1; min-height: 0; }
+  .d { display: grid; grid-template-columns: 54px 24px 30px 1fr 30px; align-items: center; gap: 6px; padding: 4px 0; font-size: 13px; }
+  .d .n { font-weight: 500; }
+  .d svg { width: 22px; height: 22px; }
+  .d .lo { text-align: right; color: var(--fg2); }
+  .d .bar { position: relative; height: 4px; border-radius: 2px; background: var(--fill2); }
+  .d .bar i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: linear-gradient(90deg, #8fdcff, var(--sky) 40%, var(--ocean) 75%, #1f5fd0); }
+  .foot { margin-top: auto; padding-top: 6px; font-size: 10.5px; color: var(--fg3); display: flex; justify-content: space-between; }
+  .foot button { color: inherit; } .foot button:hover { color: var(--accent); }
+  .empty { margin: auto; text-align: center; color: var(--fg2); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .empty .big { font-size: 15px; color: var(--fg); font-weight: 600; }
+  .empty button.primary { padding: 6px 16px; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .err { color: var(--red); font-size: 12px; margin-top: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hours, .days, .foot, .details { display: none; }
+  @media (min-height: 215px) { .hours { display: flex; } }
+  @media (min-height: 236px) { .details { display: flex; } }
+  @media (min-height: 262px) { .foot { display: flex; } }
+  @media (max-width: 380px) { .hours .h:nth-child(n+9) { display: none; } }
+  @media (min-height: 340px) { .days { display: block; } }
+  @media (max-width: 280px) { .hours .h:nth-child(n+6) { display: none; } }
+  @media (min-width: 400px) { .now .temp { font-size: 58px; } .now .r svg { width: 56px; height: 56px; } }
+</style>
+</head>
+<body>
+<div class="card" id="card"></div>
+<script src="../shared/color.js"></script>
+<script src="../shared/appearance.js"></script>
+<script src="../shared/wall-layout.js"></script>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="common.js"></script>
+<script src="weather.js"></script>
+</body>
+</html>

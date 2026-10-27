@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Calendar</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  .head { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+  .head .ttl { flex: 1; font-family: var(--font-display); font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
+  .head .ttl em { font-style: normal; color: var(--accent); }
+  .head .ttl span { color: var(--fg2); font-weight: 500; margin-left: 6px; font-size: 15px; }
+  .head .today { padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--accent); }
+  .head .today:hover { background: var(--fill); }
+  .wd, .grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+  .card.wk .wd, .card.wk .grid { grid-template-columns: 22px repeat(7, 1fr); }
+  .wn { display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 500; color: var(--fg3); font-variant-numeric: tabular-nums; }
+  .wd .wn { font-size: 10px; font-weight: 600; padding: 2px 0; }
+  .wd { margin-bottom: 2px; }
+  .wd div { text-align: center; font-size: 11px; font-weight: 600; color: var(--fg2); padding: 2px 0; }
+  .wd div.we { color: var(--fg3); }
+  .grid { flex: 1; min-height: 96px; grid-template-rows: repeat(6, minmax(0, 1fr)); }
+  .cell { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
+  .cell b { width: 28px; height: 28px; max-height: 100%; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 500; }
+  .cell.out b { color: var(--fg3); }
+  .cell.we:not(.out) b { color: var(--fg2); }
+  .cell:hover b { background: var(--fill); }
+  .cell.sel b { background: var(--fill2); }
+  .cell.now b, .cell.now.we:not(.out) b { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+  .cell.now.sel b { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .dots { display: flex; gap: 3px; height: 5px; margin-top: 1px; }
+  .dots i { width: 4px; height: 4px; border-radius: 50%; }
+  .dots .n { background: var(--accent); }
+  .dots .t { background: var(--accent-soft); }
+  .dots .d { background: var(--green); }
+  .panel { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--sep); max-height: 38%; min-height: 0; display: flex; flex-direction: column; }
+  .panel .ph { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .panel .ph .d { flex: 1; font-weight: 600; font-size: 13px; }
+  .panel .ph .d::first-letter { text-transform: uppercase; }
+  .panel .ph button.open { font-size: 12px; color: var(--accent); padding: 2px 8px; border-radius: 8px; }
+  .panel .ph button.open:hover { background: var(--fill); }
+  .panel .tl { flex: 1; min-height: 0; }
+  .panel .it { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+  .panel .it .tt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel .it.done .tt { color: var(--fg2); text-decoration: line-through; }
+  .panel .none { color: var(--fg2); font-size: 12.5px; }
+  .panel .qa { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 0 4px 0 10px; border-radius: 9px; background: var(--fill); }
+  .panel .qa input { flex: 1; min-width: 0; padding: 6px 0; font-size: 13px; }
+  .panel .qa button { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); flex: none; }
+  .panel .qa button:hover { background: var(--fill2); }
+  .panel .qa button svg { width: 12px; height: 12px; }
+  @media (max-height: 340px) { .panel { display: none; } }
+  @media (max-width: 290px) { .cell b { width: 24px; height: 24px; font-size: 13px; } }
+</style>
+</head>
+<body>
+<div class="card" id="card"></div>
+<script src="../shared/color.js"></script>
+<script src="../shared/appearance.js"></script>
+<script src="../shared/wall-layout.js"></script>
+<script src="../shared/cal.js"></script>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="common.js"></script>
+<script src="calendar.js"></script>
+</body>
+</html>

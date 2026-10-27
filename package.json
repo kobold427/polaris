@@ -1,0 +1,67 @@
+{
+  "name": "polaris",
+  "productName": "Polaris",
+  "version": "1.0.0",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win nsis portable --publish never"
+  },
+  "engines": {
+    "node": ">=20.14"
+  },
+  "devDependencies": {
+    "electron": "^44.9.3",
+    "electron-builder": "^25.0.0"
+  },
+  "optionalDependencies": {
+    "koffi": "^2.9.0"
+  },
+  "build": {
+    "appId": "com.polaris.app",
+    "productName": "Polaris",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Polaris",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "multiLanguageInstaller": true,
+      "artifactName": "Polaris-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Polaris-${version}-portable.${ext}"
+    }
+  }
+}

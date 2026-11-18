@@ -1,15 +1,17 @@
 'use strict';
 const { EventEmitter } = require('events');
-const { fetchWeather, searchPlaces, CityNotFound, normUnits } = require('./weather');
+const { fetchWeather, searchPlaces, CityNotFound, normUnits, normSource, normCustomUrl } = require('./weather');
 
 const REFRESH_MS = 15 * 60 * 1000;
 const RETRY_MS = 2 * 60 * 1000;
 
 class WeatherService extends EventEmitter {
-  constructor({ store, getLang }) {
+  constructor({ store, getLang, isActive = () => true }) {
     super();
     this.store = store;
     this.getLang = getLang;
+    this.isActive = isActive;
+    this.fetchedAt = 0;
     this.data = null;
     this.error = null;
     this.loading = false;
@@ -24,13 +26,43 @@ class WeatherService extends EventEmitter {
   }
 
   snapshot() {
-    return { settings: this.settings, data: this.data, error: this.error, loading: this.loading };
+    return { settings: this.settings, source: this.sourceCfg(), data: this.data, error: this.error, loading: this.loading };
+  }
+
+  sourceCfg() {
+    const s = this.settings;
+    return { source: normSource(s.source), customUrl: normCustomUrl(s.customUrl), fallback: s.fallback !== false };
+  }
+
+  async setSource({ source, customUrl } = {}) {
+    const next = { ...this.sourceCfg(), source: normSource(source) };
+    if (customUrl !== undefined) {
+      const url = normCustomUrl(customUrl);
+      if (!url) throw new Error('Invalid address');
+      next.customUrl = url;
+    }
+    if (next.source === 'custom' && !next.customUrl) throw new Error('Invalid address');
+    this.revision += 1;
+    this.store.set('weather', { ...this.settings, ...next });
+    this.error = null;
+    await this.refresh();
+    return this.snapshot();
+  }
+
+  async setFallback(flag) {
+    this.store.set('weather', { ...this.settings, fallback: !!flag });
+    if (this.error) await this.refresh();
+    return this.snapshot();
   }
 
   start() {
-    this.refresh();
-    this.timer = setInterval(() => this.refresh(), REFRESH_MS);
+    this.wake();
+    this.timer = setInterval(() => { if (this.isActive()) this.refresh(); }, REFRESH_MS);
     this.timer.unref();
+  }
+
+  wake() {
+    if (this.isActive() && (this.error || !this.data || Date.now() - this.fetchedAt >= REFRESH_MS)) this.refresh();
   }
 
   stop() {
@@ -39,7 +71,7 @@ class WeatherService extends EventEmitter {
   }
 
   search(query) {
-    return searchPlaces(String(query || '').slice(0, 80), { lang: this.getLang() });
+    return searchPlaces(String(query || '').slice(0, 80), { lang: this.getLang(), source: this.sourceCfg().source });
   }
 
   async setCity(name) {
@@ -67,7 +99,7 @@ class WeatherService extends EventEmitter {
 
   async change(settings) {
     this.revision += 1;
-    this.store.set('weather', settings);
+    this.store.set('weather', { ...this.sourceCfg(), ...settings });
     this.data = null;
     this.error = null;
     await this.refresh();
@@ -86,13 +118,14 @@ class WeatherService extends EventEmitter {
     this.emit('update', this.snapshot());
     try {
       settings = await this.withLocalizedName(settings);
-      const data = await fetchWeather(settings, undefined, { units: normUnits(settings.units), lang: this.getLang() });
+      const data = await fetchWeather({ ...settings, ...this.sourceCfg() }, undefined, { units: normUnits(settings.units), lang: this.getLang() });
       if (revision === this.revision) {
         this.data = data;
+        this.fetchedAt = Date.now();
         this.error = null;
         clearTimeout(this.retryTimer);
         this.store.set('weather', {
-          ...settings, lang: settings.lat != null ? settings.lang : this.getLang(),
+          ...this.settings, ...settings, lang: settings.lat != null ? settings.lang : this.getLang(),
           lat: data.lat, lon: data.lon, name: data.name, units: normUnits(settings.units),
         });
       }
@@ -101,7 +134,7 @@ class WeatherService extends EventEmitter {
         const notFound = e instanceof CityNotFound;
         this.error = notFound ? e.message : 'No data. Check your internet connection.';
         clearTimeout(this.retryTimer);
-        if (!notFound) this.retryTimer = setTimeout(() => this.refresh(), RETRY_MS);
+        if (!notFound) this.retryTimer = setTimeout(() => { if (this.isActive()) this.refresh(); }, RETRY_MS);
       }
       console.warn(`weather: ${e.message}`);
     }
@@ -117,7 +150,7 @@ class WeatherService extends EventEmitter {
     const lang = this.getLang();
     if (settings.lang === lang || settings.lat == null || settings.lon == null) return settings;
     try {
-      const found = await searchPlaces(settings.name || settings.city, { lang, count: 6 });
+      const found = await searchPlaces(settings.name || settings.city, { lang, count: 6, source: this.sourceCfg().source });
       const nearest = found
         .map((place) => ({ place, distance: Math.hypot(place.lat - settings.lat, place.lon - settings.lon) }))
         .sort((a, b) => a.distance - b.distance)[0];

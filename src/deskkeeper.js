@@ -3,20 +3,26 @@
 const DESKTOP_CLASSES = new Set(['Progman', 'WorkerW']);
 
 class DesktopKeeper {
-  constructor({ windows, foreground, isOurs = () => false, raise, lower, enabled = () => true, busy = () => false, every = 300, log = () => {} }) {
-    Object.assign(this, { windows, foreground, isOurs, raise, lower, enabled, busy, every, log });
+  constructor({ windows, foreground, isOurs = () => false, raise, lower, enabled = () => true, busy = () => false, every = 300, slowEvery = 1500, log = () => {} }) {
+    Object.assign(this, { windows, foreground, isOurs, raise, lower, enabled, busy, every, slowEvery, log });
     this.raised = false;
     this.timer = null;
   }
 
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => { try { this.tick(); } catch (e) { this.log(`desktop keeper: ${e.message}`); } }, this.every);
+    const run = () => {
+      try { this.tick(); } catch (e) { this.log(`desktop keeper: ${e.message}`); }
+      if (!this.timer) return;
+      this.timer = setTimeout(run, this.enabled() || this.raised ? this.every : this.slowEvery);
+      if (this.timer.unref) this.timer.unref();
+    };
+    this.timer = setTimeout(run, this.every);
     if (this.timer.unref) this.timer.unref();
   }
 
   stop() {
-    clearInterval(this.timer);
+    clearTimeout(this.timer);
     this.timer = null;
   }
 

@@ -6,6 +6,7 @@ const TOKEN_RE = new RegExp(
   `\\s*(?:📅|⏳|🛫|➕|✅|❌)\\uFE0F?\\s*${DATE}|\\s*\\[(?:due|scheduled|start|completion|created|cancelled)::\\s*${DATE}\\]`, 'gu');
 const DUE_RE = new RegExp(`(?:📅\\uFE0F?\\s*|\\[due::\\s*)(${DATE})`, 'u');
 const SCHED_RE = new RegExp(`(?:⏳\\uFE0F?\\s*|\\[scheduled::\\s*)(${DATE})`, 'u');
+const CREATED_RE = new RegExp(`(?:➕\\uFE0F?\\s*|\\[created::\\s*)(${DATE})`, 'u');
 const DONE_RE = new RegExp(`(?:✅\\uFE0F?\\s*|\\[completion::\\s*)(${DATE})`, 'u');
 const DONE_TOKEN_RE = new RegExp(`\\s*(?:✅\\uFE0F?\\s*${DATE}|\\[completion::\\s*${DATE}\\])`, 'gu');
 
@@ -34,6 +35,7 @@ function parseLine(raw, index) {
     due: (DUE_RE.exec(body) || [])[1] || null,
     scheduled: (SCHED_RE.exec(body) || [])[1] || null,
     doneDate: (DONE_RE.exec(body) || [])[1] || null,
+    created: (CREATED_RE.exec(body) || [])[1] || null,
     recurring: body.includes('🔁'),
     tokens,
   };
@@ -58,10 +60,10 @@ function join(lines, eol) {
   return lines.join(eol);
 }
 
-function appendTask(text, title, due) {
+function appendTask(text, title, due, created) {
   const { lines, eol } = splitLines(text || '');
   while (lines.length && lines[lines.length - 1] === '') lines.pop();
-  lines.push(`- [ ] ${title.trim()}${due ? ` 📅 ${due}` : ''}`);
+  lines.push(`- [ ] ${title.trim()}${created ? ` ➕ ${created}` : ''}${due ? ` 📅 ${due}` : ''}`);
   lines.push('');
   return join(lines, eol);
 }
@@ -94,6 +96,71 @@ function removeLine(text, idx) {
   if (!parseLine(lines[idx], idx)) return null;
   lines.splice(idx, 1);
   return join(lines, eol);
+}
+
+const indentOf = (line) => /^\s*/.exec(line)[0].replace(/\t/g, '    ').length;
+
+function blockEnd(lines, idx) {
+  const base = indentOf(lines[idx]);
+  let j = idx + 1;
+  while (j < lines.length && lines[j].trim() !== '' && indentOf(lines[j]) > base) j++;
+  return j;
+}
+
+function moveLine(text, from, to, after = false) {
+  const { lines, eol } = splitLines(text);
+  if (!parseLine(lines[from], from) || to < 0 || to >= lines.length) return null;
+  const fromEnd = blockEnd(lines, from);
+  if (to >= from && to < fromEnd) return text;
+  const block = lines.slice(from, fromEnd);
+  let at = after ? blockEnd(lines, to) : to;
+  if (at > from) at -= block.length;
+  lines.splice(from, block.length);
+  lines.splice(at, 0, ...block);
+  return join(lines, eol);
+}
+
+function taskBlocks(lines) {
+  const blocks = [];
+  for (let i = 0; i < lines.length;) {
+    const t = parseLine(lines[i], i);
+    if (!t) { i++; continue; }
+    const end = blockEnd(lines, i);
+    blocks.push({ start: i, end, task: t, lines: lines.slice(i, end) });
+    i = end;
+  }
+  return blocks;
+}
+
+function sortTaskBlocks(text, rank, dir = 'asc') {
+  const { lines, eol } = splitLines(text || '');
+  const blocks = taskBlocks(lines);
+  if (blocks.length < 2) return text;
+  const sign = dir === 'desc' ? -1 : 1;
+  const keyed = blocks.map((b, i) => ({ b, i, key: rank(b.task, i) }));
+  keyed.sort((x, y) => {
+    const kx = x.key;
+    const ky = y.key;
+    if (kx == null && ky == null) return x.i - y.i;
+    if (kx == null) return -sign;
+    if (ky == null) return sign;
+    if (kx !== ky) return kx < ky ? -sign : sign;
+    return x.i - y.i;
+  });
+  const out = [];
+  let k = 0;
+  for (let i = 0; i < lines.length;) {
+    const b = blocks[k];
+    if (b && b.start === i) {
+      out.push(...keyed[k].b.lines);
+      i = b.end;
+      k++;
+    } else {
+      out.push(lines[i]);
+      i++;
+    }
+  }
+  return join(out, eol);
 }
 
 function dateTasks(text) {
@@ -160,6 +227,6 @@ function formatMoment(d, fmt, locale = 'en') {
 }
 
 module.exports = {
-  ymd, pad, TASK_RE, parseLine, parseTasks, splitLines, locate, appendTask, toggleLine, editLine, removeLine,
+  ymd, pad, TASK_RE, parseLine, parseTasks, splitLines, locate, appendTask, toggleLine, editLine, removeLine, moveLine, sortTaskBlocks, taskBlocks,
   dateTasks, formatMoment, isoWeek,
 };

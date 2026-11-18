@@ -3,11 +3,14 @@ const path = require('path');
 const pin = require('./winpin');
 const { webPreferences, FRAMELESS, lockNavigation } = require('./window-kit');
 
+const IDLE_MS = 60000;
+
 class GridOverlay {
   constructor({ BrowserWindow, preload, rendererDir }) {
     Object.assign(this, { BrowserWindow, preload, rendererDir });
     this.wins = new Map();
     this.hideTimer = null;
+    this.idleTimer = null;
     this.activeId = null;
   }
 
@@ -26,7 +29,7 @@ class GridOverlay {
       e.ready = true;
       if (e.pending) { win.webContents.send('grid:update', e.pending); e.pending = null; }
     });
-    win.on('closed', () => this.wins.delete(display.id));
+    win.on('closed', () => { if (this.wins.get(display.id) === e) this.wins.delete(display.id); });
     win.loadFile(path.join(this.rendererDir, 'grid.html'), { query: { key: 'grid' } });
     this.wins.set(display.id, e);
     return e;
@@ -45,6 +48,7 @@ class GridOverlay {
 
   show(display, p) {
     clearTimeout(this.hideTimer);
+    clearTimeout(this.idleTimer);
     this.activeId = display.id;
     const e = this._entry(display);
     const wa = display.workArea;
@@ -65,10 +69,18 @@ class GridOverlay {
       this._send(e, { visible: false });
       this.hideTimer = setTimeout(() => { if (!e.win.isDestroyed()) e.win.hide(); e.shown = false; }, 260);
     }
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.release(), IDLE_MS);
+    if (this.idleTimer.unref) this.idleTimer.unref();
+  }
+
+  release() {
+    for (const e of [...this.wins.values()]) if (!e.shown && !e.win.isDestroyed()) e.win.destroy();
   }
 
   dispose() {
     clearTimeout(this.hideTimer);
+    clearTimeout(this.idleTimer);
     for (const e of this.wins.values()) if (!e.win.isDestroyed()) e.win.destroy();
     this.wins.clear();
   }

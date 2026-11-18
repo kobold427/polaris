@@ -12,6 +12,8 @@ const DEFAULTS = {
   durations: { work: 25, short: 5, long: 15 },
   longEvery: 4,
   autoStart: false,
+  companion: 'lotus',
+  idleEnd: true,
   idleEndMin: 30,
   colors: { work: '#0a84ff', short: '#30d158', long: '#bf5af2' },
   subjects: [{ name: 'Focus', color: PALETTE[0] }],
@@ -55,6 +57,8 @@ function normalizeSettings(raw) {
     },
     longEvery: int(r.longEvery, 2, 12, d.longEvery),
     autoStart: !!r.autoStart,
+    companion: ['lotus', 'star', 'off'].includes(r.companion) ? r.companion : d.companion,
+    idleEnd: typeof r.idleEnd === 'boolean' ? r.idleEnd : d.idleEnd,
     idleEndMin: int(r.idleEndMin, 5, 240, d.idleEndMin),
     colors: Object.fromEntries(PHASES.map((p) => [p, HEX.test(col[p]) ? col[p].toLowerCase() : d.colors[p]])),
     subjects,
@@ -87,6 +91,7 @@ class PomodoroEngine extends EventEmitter {
     this.brkTotal = 0;
     this.day = this._emptyDay(dayKeyOf(now()));
     this.timer = null;
+    this.ticking = false;
   }
 
   _notify(title, body, info) {
@@ -125,14 +130,31 @@ class PomodoroEngine extends EventEmitter {
 
   weekSec() { return this.weekBase.sec + this.day.focusSec; }
 
-  startTicking(ms = 250) {
-    clearInterval(this.timer);
-    this.timer = setInterval(() => this.tick(), ms);
+  startTicking() {
+    this.ticking = true;
+    this._arm();
+  }
+
+  _arm() {
+    if (!this.ticking) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.tick(); this._arm(); }, this._nextDelay());
     if (this.timer.unref) this.timer.unref();
   }
 
+  _nextDelay() {
+    const ts = this.now();
+    const next = new Date(ts);
+    next.setHours(24, 0, 0, 0);
+    let wait = 30000;
+    if (this.status === 'running') wait = Math.min(1000, this.endAt - ts);
+    else if (this.session && this.settings.idleEnd) wait = Math.min(10000, this.session.lastActive + this.settings.idleEndMin * 60000 - ts);
+    return Math.max(50, Math.min(wait, next.getTime() - ts + 50));
+  }
+
   async shutdown() {
-    clearInterval(this.timer);
+    this.ticking = false;
+    clearTimeout(this.timer);
     this.timer = null;
     if (this.session) this.endSession('app quit', false);
     await this.log.flush();
@@ -145,6 +167,7 @@ class PomodoroEngine extends EventEmitter {
 
   _changed() {
     this.emit('state', this.getState());
+    this._arm();
   }
 
   getState() {
@@ -412,7 +435,7 @@ class PomodoroEngine extends EventEmitter {
       durations: { ...keep.durations, ...(patch.durations || {}) },
       colors: { ...keep.colors, ...(patch.colors || {}) },
       alerts: { ...keep.alerts, ...(patch.alerts && typeof patch.alerts === 'object' ? patch.alerts : {}) },
-      ...Object.fromEntries(['longEvery', 'autoStart', 'idleEndMin', 'goalMin', 'weeklyGoalMin', 'logFolder'].filter((k) => k in patch).map((k) => [k, patch[k]])),
+      ...Object.fromEntries(['longEvery', 'autoStart', 'companion', 'idleEnd', 'idleEndMin', 'goalMin', 'weeklyGoalMin', 'logFolder'].filter((k) => k in patch).map((k) => [k, patch[k]])),
     });
     const folderChanged = next.logFolder !== keep.logFolder;
     this.settings = next;
@@ -428,7 +451,7 @@ class PomodoroEngine extends EventEmitter {
     if (dayKeyOf(ts) !== this.day.key) this._rollover(ts);
     if (this.status === 'running') {
       if (ts >= this.endAt) this._complete(Math.min(ts, this.endAt), ts);
-    } else if (this.session && ts - this.session.lastActive >= this.settings.idleEndMin * 60000) {
+    } else if (this.session && this.settings.idleEnd && ts - this.session.lastActive >= this.settings.idleEndMin * 60000) {
       this.endSession('idle', false, this.session.lastActive);
     }
   }

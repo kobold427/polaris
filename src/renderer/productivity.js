@@ -196,10 +196,12 @@
   api.productivity.on(() => reload());
   let frame = 0;
   new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(relayout); }).observe(E.area);
-  setInterval(() => {
+  const refresh = () => {
     if (document.hidden) return;
     if (H.ymd(new Date()) !== todayKey) relayout(); else if (st && st.seg) paint();
-  }, 15000);
+  };
+  setInterval(refresh, 15000);
+  document.addEventListener('visibilitychange', refresh);
 
   (async () => {
     st = await api.pomodoro.state();

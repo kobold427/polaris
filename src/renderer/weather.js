@@ -167,32 +167,94 @@
 
     const upd = new Date(data.updated);
     const time = `${String(upd.getHours()).padStart(2, '0')}:${String(upd.getMinutes()).padStart(2, '0')}`;
+    const warn = error ? el('span', { className: 'warn', title: `${t(error)} ${t('Showing data from {time}.', { time })}` }, '⚠') : null;
+    const precipValue = n.pop == null && n.precip != null
+      ? `${Math.round(n.precip * 10) / 10} ${t(data.precipUnit || 'mm')}`
+      : pct(n.pop);
+    const sourceName = data.sourceName ? t(data.sourceName) : 'Open-Meteo';
     card.replaceChildren(...[
       el('div', { className: 'now' },
         el('div', { className: 'l' },
-          el('div', { className: 'city', title: name }, name, loading ? el('span', { className: 'busy' }) : null),
+          el('div', { className: 'city', title: name }, name, loading ? el('span', { className: 'busy' }) : warn),
           el('div', { className: 'temp' }, deg(n.temp))),
         el('div', { className: 'r' },
           html(wxIcon(n.code, n.day)),
           el('div', { className: 'cond' }, t(TEXT[KIND(n.code)])),
           el('div', { className: 'hl' }, `${t('H:{n}', { n: deg(today.max) })}  ${t('L:{n}', { n: deg(today.min) })}`),
           el('div', { className: 'hl' }, t('Feels like {n}', { n: deg(n.feels) })))),
-      error ? el('div', { className: 'err' }, t(error)) : null,
       el('div', { className: 'details' },
         detail(ICON_WIND, t('Wind'), n.wind == null ? '—' : `${num(n.wind)} ${t(data.windUnit || 'km/h')}`),
         detail(ICON_DROP, t('Humidity'), pct(n.humidity)),
-        detail(ICON_RAIN, t('Precip.'), pct(n.pop), t('Chance of precipitation'))),
+        detail(ICON_RAIN, t('Precip.'), precipValue, n.pop == null ? t('Precipitation in the next hour') : t('Chance of precipitation'))),
       el('div', { className: 'hours' }, hours),
       el('div', { className: 'days scroll' }, days),
       el('div', { className: 'foot' },
-        el('button', { 'data-nodrag': true, onClick: () => api.openExternal('https://open-meteo.com/') }, t('Data: Open-Meteo')),
-        el('span', {}, t('updated {time}', { time }))),
+        el('button', { 'data-nodrag': true, title: data.sourceSite || '', onClick: () => data.sourceSite && api.openExternal(data.sourceSite) }, t('Data: {name}', { name: sourceName })),
+        error
+          ? el('span', { className: 'stale', title: t(error) }, t('offline · {time}', { time }))
+          : el('span', {}, t('updated {time}', { time }))),
     ].filter(Boolean));
+    fit();
   }
+
+  const DAYS_MIN = 38;
+  const DROP_ORDER = ['days', 'foot', 'details', 'hours'];
+
+  const HOUR_MIN_W = 44;
+
+  function fitHours(hours) {
+    const cols = [...hours.children];
+    const fitCount = Math.max(4, Math.min(cols.length, Math.floor(hours.clientWidth / HOUR_MIN_W)));
+    cols.forEach((col, i) => col.classList.toggle('cut', i >= fitCount));
+  }
+
+  function fit() {
+    const parts = Object.fromEntries(DROP_ORDER.map((c) => [c, card.querySelector(`:scope > .${c}`)]));
+    if (!parts.hours) return;
+    for (const node of Object.values(parts)) node.classList.remove('off');
+    const days = parts.days;
+    days.style.flex = '';
+    days.style.height = '';
+    days.style.removeProperty('--dh');
+    fitHours(parts.hours);
+    const cs = getComputedStyle(card);
+    const avail = card.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const height = (node) => {
+      if (node.classList.contains('off')) return 0;
+      const st = getComputedStyle(node);
+      const margin = node === parts.foot ? 6 : parseFloat(st.marginTop) || 0;
+      if (node === days) return margin + Math.min(node.scrollHeight, DAYS_MIN);
+      return margin + node.offsetHeight;
+    };
+    const need = () => [...card.children].reduce((sum, node) => sum + height(node), 0);
+    for (const c of DROP_ORDER) {
+      if (need() <= avail + 0.5) break;
+      parts[c].classList.add('off');
+    }
+    const first = days.querySelector('.d');
+    if (days.classList.contains('off') || !first) return;
+    const rowH = first.getBoundingClientRect().height;
+    const st = getComputedStyle(days);
+    const chrome = days.offsetHeight - days.clientHeight + parseFloat(st.paddingTop) + parseFloat(st.paddingBottom);
+    const space = avail - (need() - height(days)) - (parseFloat(st.marginTop) || 0) - chrome;
+    const total = days.children.length;
+    const rows = Math.max(1, Math.min(total, Math.floor(space / rowH)));
+    days.style.flex = 'none';
+    if (rows < total) {
+      const stretched = Math.floor((space / rows) * 100) / 100;
+      days.style.setProperty('--dh', `${stretched}px`);
+      days.style.height = `${stretched * rows + chrome}px`;
+    } else {
+      days.style.height = `${rows * rowH + chrome}px`;
+    }
+  }
+
+  new ResizeObserver(() => fit()).observe(card);
 
   init({
     menu: () => {
       const u = unitsOf();
+      const src = snap.source || { source: 'open-meteo', customUrl: '', fallback: true };
       return [
         { id: 'city', label: t('Change City…'), run: changeCity },
         { id: 'refresh', label: t('Refresh'), run: async () => { const r = await api.weather.refresh(); if (r && r.settings) { snap = r; render(); } } },
@@ -200,10 +262,52 @@
         { id: 'u:metric', label: t('Metric (°C, km/h)'), type: 'radio', checked: u === 'metric', run: () => setUnits('metric') },
         { id: 'u:imperial', label: t('Imperial (°F, mph)'), type: 'radio', checked: u === 'imperial', run: () => setUnits('imperial') },
         { type: 'separator' },
-        { id: 'src', label: t('Data Source: Open-Meteo (CC BY 4.0)'), run: () => api.openExternal('https://open-meteo.com/') },
+        {
+          id: 'src', label: t('Data Source'),
+          submenu: [
+            { id: 's:open-meteo', label: 'Open-Meteo', type: 'radio', checked: src.source === 'open-meteo', run: () => setSource({ source: 'open-meteo' }) },
+            { id: 's:met', label: t('MET Norway (yr.no)'), type: 'radio', checked: src.source === 'met', run: () => setSource({ source: 'met' }) },
+            { id: 's:custom', label: src.customUrl ? t('Custom: {host}', { host: hostOf(src.customUrl) }) : t('Custom Address…'), type: 'radio', checked: src.source === 'custom', run: () => (src.customUrl ? setSource({ source: 'custom' }) : customSource()) },
+            { type: 'separator' },
+            { id: 's:edit', label: t('Change Custom Address…'), run: customSource },
+            { id: 's:fallback', label: t('Switch Source Automatically on Error'), type: 'checkbox', checked: src.fallback, run: () => setFallback(!src.fallback) },
+            { type: 'separator' },
+            { id: 's:about', label: t('About {name}', { name: snap.data && snap.data.sourceName ? t(snap.data.sourceName) : 'Open-Meteo' }), enabled: !!(snap.data && snap.data.sourceSite), run: () => api.openExternal(snap.data.sourceSite) },
+          ],
+        },
       ];
     },
   });
+
+  function hostOf(url) {
+    try { return new URL(url).host; } catch { return url; }
+  }
+
+  async function setSource(cfg) {
+    busy(true);
+    const r = await api.weather.setSource(cfg);
+    if (r && r.settings) snap = r;
+    busy(false);
+    return r;
+  }
+
+  async function setFallback(flag) {
+    const r = await api.weather.setFallback(flag);
+    if (r && r.settings) { snap = r; render(); }
+  }
+
+  async function customSource() {
+    let value = (snap.source && snap.source.customUrl) || '';
+    let note = '';
+    for (;;) {
+      const v = await ask({ title: t('Custom weather source'), label: 'https://example.com/v1/forecast', value, ok: t('Save'), note, hint: t('Address of a server with the Open-Meteo API (for example, your own copy of Open-Meteo).') });
+      if (!v) return;
+      value = v;
+      const r = await setSource({ source: 'custom', customUrl: v });
+      if (r && r.settings) return;
+      note = t('The address is not valid. Use http:// or https://');
+    }
+  }
   api.weather.on((s) => { snap = s; render(); });
   api.weather.get().then((s) => { if (s && s.settings) snap = s; render(); });
 })();

@@ -7,16 +7,24 @@
 <link rel="stylesheet" href="common.css">
 <style>
   .top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
-  .top .seg button { padding: 3px 9px; }
   .top .icon-btn { flex: none; }
-  .ring { position: relative; flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; }
-  .ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .ring .track { stroke: var(--fill2); }
-  .ring .bar { transition: stroke-dashoffset .25s linear, stroke .2s; stroke-linecap: round; }
-  .mid { position: relative; text-align: center; line-height: 1; }
-  .mid .t { font-family: var(--font-display); font-size: min(23cqmin, 54px); font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-  .mid .s { margin-top: 4px; font-size: 12px; color: var(--fg2); }
-  @container (max-height: 110px) { .mid .s { display: none; } }
+  .top.sumtop { justify-content: flex-start; gap: 4px; margin-left: -6px; }
+  .top .subj { margin-top: 0; min-width: 0; max-width: calc(100% - 34px); }
+  .top .ttl { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage { position: relative; flex: 1; min-height: 0; margin: 0 -4px; }
+  .stage .pal { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .clock { text-align: center; line-height: 1; padding-top: 2px; }
+  .clock .t { font-family: var(--font-display); font-size: 40px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .clock .s { margin-top: 6px; font-size: 12px; color: var(--fg2); }
+  .nopal .stage { display: none; }
+  .nopal .clock { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .nopal .clock .t { font-size: min(23cqmin, 54px); }
+  @container (max-height: 210px) {
+    .stage { display: none; }
+    .clock { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+    .clock .t { font-size: min(23cqmin, 54px); }
+  }
+  @container (max-height: 120px) { .clock .s { display: none; } }
   .subj { align-self: center; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; margin-top: 4px; padding: 4px 10px 4px 9px; border-radius: 999px; background: var(--fill); font-size: 13px; font-weight: 500; }
   .subj:hover { background: var(--fill2); }
   .subj i { flex: none; width: 9px; height: 9px; border-radius: 50%; }
@@ -66,7 +74,7 @@
   .result .big { font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -.02em; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
   .result .meta { font-size: 12px; color: var(--fg2); margin-bottom: 6px; }
   .result .ok { margin-top: 10px; width: 100%; padding: 7px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: size; }
   .foot .dots { display: inline-flex; gap: 5px; }
 </style>
 </head>
@@ -78,6 +86,7 @@
 <script src="../shared/lang-ru.js"></script>
 <script src="../shared/i18n.js"></script>
 <script src="common.js"></script>
+<script src="companion.js"></script>
 <script src="pomodoro.js"></script>
 </body>
 </html>

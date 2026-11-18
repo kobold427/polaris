@@ -46,6 +46,7 @@
     list: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.6" cy="4" r=".6" fill="currentColor"/><circle cx="2.6" cy="8" r=".6" fill="currentColor"/><circle cx="2.6" cy="12" r=".6" fill="currentColor"/></svg>',
     chevD: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>',
     gear: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"/></svg>',
+    pipette: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.2 2.6a1.9 1.9 0 0 1 2.7 2.7l-1.6 1.6.7.7-1.1 1.1-3.6-3.6 1.1-1.1.7.7z"/><path d="M7.9 5.8 3.2 10.5 2.6 13.4l2.9-.6 4.7-4.7"/></svg>',
     note: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h6l3 3v8H4z"/><path d="M10 2.5v3h3"/></svg>',
   };
   const icon = (name) => ICONS[name];
@@ -244,19 +245,28 @@
         items = (menu ? menu(e) : []).filter(Boolean);
         if (items.length) items.push({ type: 'separator' });
         items.push(
-          { id: '__look', label: t('Appearance & Settings…'), run: () => api.settings.open('look') },
+          { id: '__look', label: t('Appearance & Settings…'), run: () => api.settings.open('general') },
           { id: '__hide', label: t('Hide Widget') },
           { id: '__lock', label: locked ? t('Unlock Position') : t('Lock Position') },
         );
       }
-      const plain = items.map(({ run, ...rest }) => rest);
-      const id = await api.menu(plain);
-      const picked = id && items.find((i) => i.id === id);
+      const strip = (list) => list.map(({ run, submenu, ...rest }) => (submenu ? { ...rest, submenu: strip(submenu.filter(Boolean)) } : rest));
+      const find = (list, wanted) => {
+        for (const item of list) {
+          if (!item) continue;
+          if (item.id === wanted) return item;
+          const inner = item.submenu && find(item.submenu, wanted);
+          if (inner) return inner;
+        }
+        return null;
+      };
+      const id = await api.menu(strip(items));
+      const picked = id && find(items, id);
       if (picked && picked.run) picked.run();
     });
   }
 
-  function ask({ title, label = '', value = '', type = 'text', min, max, ok = t('OK'), note = '' }) {
+  function ask({ title, label = '', value = '', type = 'text', min, max, ok = t('OK'), note = '', hint = '' }) {
     return new Promise((resolve) => {
       const input = el('input', { type, value: String(value), min, max, placeholder: label });
       const done = (v) => { back.remove(); resolve(v); };
@@ -270,6 +280,7 @@
           el('div', { className: 'modal-title' }, title),
           input,
           note ? el('div', { className: 'modal-note' }, note) : null,
+          hint && !note ? el('div', { className: 'modal-hint' }, hint) : null,
           el('div', { className: 'modal-btns' },
             el('button', { onClick: () => done(null) }, t('Cancel')),
             el('button', { className: 'primary', onClick: submit }, ok))));

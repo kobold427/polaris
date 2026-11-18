@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const { api, el, icon, ask, relDate, debounce, parseYmd, t: tr, tn } = W;
+  const { api, el, icon, relDate, debounce, parseYmd, t: tr } = W;
   const ob = api.obsidian;
 
   let tab = 'tasks';
@@ -9,11 +9,29 @@
   let doneOpen = false;
   let editing = null;
   let pending = false;
+  let sortDir = null;
+  let dragging = false;
 
   const $ = (id) => document.getElementById(id);
   const card = $('card');
 
   const { parseInput } = window.TaskInput;
+  const RU = W.lang === 'ru';
+  const COMMANDS = [
+    [RU ? '@сегодня' : '@today', 'today'],
+    [RU ? '@завтра' : '@tomorrow', 'tomorrow'],
+    ...(RU ? [['@послезавтра', 'the day after tomorrow']] : []),
+    ['@+3', 'in 3 days (any number)'],
+    [RU ? '@пт' : '@fri', RU ? 'next weekday: пн, вт, ср, чт, пт, сб, вс' : 'next weekday: mon … sun'],
+    ['@20.11', 'date: day.month or day.month.year'],
+    ['@11/20', 'date: month/day'],
+    ['@2026-11-20', 'exact date'],
+  ];
+  const SORT_ICONS = {
+    asc: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 13V3M2.2 5.3 4.5 3l2.3 2.3M9 4h5M9 8h3.5M9 12h2"/></svg>',
+    desc: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3v10M2.2 10.7 4.5 13l2.3-2.3M9 4h2M9 8h3.5M9 12h5"/></svg>',
+  };
+  const GRIP_ICON = '<svg viewBox="0 0 10 16" fill="currentColor"><circle cx="3" cy="4" r="1.2"/><circle cx="7" cy="4" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/><circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/></svg>';
   window.__parseInput = parseInput;
 
   let toastTimer = null;
@@ -46,6 +64,7 @@
           el('button', { dataset: { tab: 'tasks' }, onClick: () => setTab('tasks') }, tr('Tasks')),
           el('button', { dataset: { tab: 'note' }, onClick: () => setTab('note') }, tr('Note'))),
         el('div', { className: 'sp' }),
+        el('div', { id: 'sortHost' }),
         el('div', { id: 'chipHost' })),
       el('div', { className: 'pane', id: 'pane' }),
       el('div', { className: 'toast', id: 'toast' }));
@@ -53,15 +72,38 @@
   }
   function drawChip() { const h = $('chipHost'); if (h) h.replaceChildren(chip()); }
 
+  function drawSort() {
+    const host = $('sortHost');
+    if (!host) return;
+    if (tab !== 'tasks') { host.replaceChildren(); return; }
+    const next = sortDir === 'asc' ? 'desc' : 'asc';
+    const btn = el('button', {
+      className: 'icon-btn sortbtn', html: SORT_ICONS[sortDir || 'asc'], 'data-nodrag': true,
+      title: next === 'asc' ? tr('Sort by creation time: oldest first') : tr('Sort by creation time: newest first'),
+      onClick: () => sortBy(next),
+    });
+    host.replaceChildren(btn);
+  }
+
+  async function sortBy(dir) {
+    sortDir = dir === 'desc' ? 'desc' : 'asc';
+    api.state.set({ sortDir });
+    drawSort();
+    const res = await ob.tasks.sort(sortDir);
+    apply(res);
+    if (!res || !res.error) toast(sortDir === 'asc' ? tr('Sorted: oldest first') : tr('Sorted: newest first'));
+  }
+
   function setTab(t) {
     tab = t;
     api.state.set({ tab: t });
     for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === t);
+    drawSort();
     if (t === 'tasks') { renderTasks(); refreshTasks(); } else { renderNote(); }
   }
 
   async function refreshTasks() {
-    if (editing) { pending = true; return; }
+    if (editing || dragging) { pending = true; return; }
     const res = await ob.tasks.list();
     if (res && res.tasks) { list = res; if (tab === 'tasks') renderTasks(); }
   }
@@ -85,8 +127,129 @@
     }
     if (t.recurring) meta.push(el('span', {}, tr('↻ repeats')));
     const del = el('button', { className: 'icon-btn del', html: icon('x'), title: tr('Delete'), onClick: async () => apply(await ob.tasks.remove(ref)) });
-    return el('div', { className: `row${t.done ? ' done' : ''}${t.cancelled ? ' cancelled' : ''}` },
-      chk, el('div', { className: 'main' }, title, meta.length ? el('div', { className: 'meta' }, meta) : null), del);
+    const open = !t.done && !t.cancelled;
+    const node = el('div', { className: `row${t.done ? ' done' : ''}${t.cancelled ? ' cancelled' : ''}${open ? ' open' : ''}`, 'data-nodrag': open ? true : null });
+    node.task = t;
+    if (open) {
+      node.append(el('div', { className: 'grip', html: GRIP_ICON, title: tr('Drag to reorder') }));
+      node.addEventListener('pointerdown', (e) => armReorder(e, node));
+    }
+    node.append(chk, el('div', { className: 'main' }, title, meta.length ? el('div', { className: 'meta' }, meta) : null), del);
+    return node;
+  }
+
+  function armReorder(e, node) {
+    if (e.button !== 0 || e.target.closest('.chk, .del, input, textarea')) return;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const id = e.pointerId;
+    const off = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', off);
+      document.removeEventListener('pointercancel', off);
+    };
+    const onMove = (ev) => {
+      if (ev.pointerId !== id) return;
+      if (!(ev.buttons & 1)) { off(); return; }
+      if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 5) return;
+      off();
+      startReorder(ev, node);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', off);
+    document.addEventListener('pointercancel', off);
+  }
+
+  function startReorder(e, node) {
+    e.preventDefault();
+    const items = $('items');
+    const rows = [...items.querySelectorAll('.row.open')];
+    if (rows.length < 2) return;
+    dragging = true;
+    node.setPointerCapture(e.pointerId);
+    node.classList.add('dragging');
+    let target = null;
+    let scrollTimer = null;
+    const mark = () => {
+      for (const r of rows) r.classList.remove('drop-before', 'drop-after');
+      if (target) target.row.classList.add(target.after ? 'drop-after' : 'drop-before');
+    };
+    const locate = (y) => {
+      const first = rows[0].getBoundingClientRect();
+      const last = rows[rows.length - 1].getBoundingClientRect();
+      if (y < first.top) return rows[0] === node ? null : { row: rows[0], after: false };
+      if (y >= last.bottom) return rows[rows.length - 1] === node ? null : { row: rows[rows.length - 1], after: true };
+      for (const r of rows) {
+        const b = r.getBoundingClientRect();
+        if (y >= b.top && y < b.bottom) return r === node ? null : { row: r, after: y > b.top + b.height / 2 };
+      }
+      return null;
+    };
+    const move = (ev) => {
+      target = locate(ev.clientY);
+      mark();
+      const box = items.getBoundingClientRect();
+      clearInterval(scrollTimer);
+      const edge = ev.clientY < box.top + 24 ? -6 : ev.clientY > box.bottom - 24 ? 6 : 0;
+      if (edge) scrollTimer = setInterval(() => { items.scrollTop += edge; }, 16);
+    };
+    const end = async (commit) => {
+      node.removeEventListener('pointermove', move);
+      node.removeEventListener('pointerup', onUp);
+      node.removeEventListener('lostpointercapture', onLost);
+      clearInterval(scrollTimer);
+      node.classList.remove('dragging');
+      const goal = target;
+      target = null;
+      mark();
+      dragging = false;
+      if (commit && goal) {
+        const from = node.task;
+        const to = goal.row.task;
+        apply(await ob.tasks.move({ line: from.line, raw: from.raw }, { line: to.line, raw: to.raw }, goal.after));
+      }
+      if (pending) { pending = false; refreshTasks(); }
+    };
+    const onUp = () => end(true);
+    const onLost = () => end(false);
+    node.addEventListener('pointermove', move);
+    node.addEventListener('pointerup', onUp);
+    node.addEventListener('lostpointercapture', onLost);
+    move(e);
+  }
+
+  function hintsFor(input) {
+    const m = /(?:^|\s)(@\S*)$/.exec(input.value);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  function insertCommand(input, token) {
+    const v = input.value;
+    const m = /(?:^|\s)(@\S*)$/.exec(v);
+    input.value = m ? v.slice(0, v.length - m[1].length) + token : `${v.replace(/\s+$/, '')}${v.trim() ? ' ' : ''}${token}`;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  function drawHints(input, pop, force) {
+    const partial = hintsFor(input);
+    if (!force && partial === null) { pop.classList.add('hidden'); return; }
+    const numeric = /^@[+\d]/;
+    const shown = COMMANDS.filter(([token]) => !partial || partial === '@' || token.toLowerCase().startsWith(partial) || (numeric.test(partial) && numeric.test(token)));
+    const parsed = parseInput(input.value);
+    const preview = parsed.due ? el('div', { className: 'pv' }, tr('Due: {date}', { date: W.longDate(parseYmd(parsed.due)) })) : null;
+    const items = (shown.length ? shown : COMMANDS).map(([token, desc]) => el('button', {
+      className: 'cmd', 'data-nodrag': true,
+      onPointerdown: (e) => e.preventDefault(),
+      onClick: () => { insertCommand(input, token); drawHints(input, pop, false); },
+    }, el('b', {}, token), el('span', {}, tr(desc))));
+    pop.replaceChildren(...[
+      el('div', { className: 'ttl' }, tr('Due date commands')),
+      preview,
+      ...items,
+      el('div', { className: 'foot-hint' }, tr('Write the command at the end of the task, e.g. “Buy milk @tomorrow”.')),
+    ].filter(Boolean));
+    pop.classList.remove('hidden');
   }
 
   function startEdit(t, titleEl, ref) {
@@ -129,19 +292,37 @@
       }
     }
     const input = el('input', { placeholder: tr('New task… @tomorrow'), 'data-nodrag': true });
+    const pop = el('div', { className: 'hints hidden', id: 'hints' });
+    let pinned = false;
     input.addEventListener('keydown', async (e) => {
+      if (e.key === 'Escape') { pinned = false; pop.classList.add('hidden'); return; }
       if (e.key !== 'Enter' || !input.value.trim()) return;
       const p = parseInput(input.value);
       input.value = '';
+      pinned = false;
+      pop.classList.add('hidden');
       apply(await ob.tasks.add(p));
       const again = $('pane') && $('pane').querySelector('.add input');
       if (again) again.focus();
     });
+    input.addEventListener('input', () => drawHints(input, pop, pinned));
+    input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) { pinned = false; pop.classList.add('hidden'); } }, 120));
+    const help = el('button', {
+      className: 'icon-btn help', 'data-nodrag': true, title: tr('Due date commands'),
+      onPointerdown: (e) => e.preventDefault(),
+      onClick: () => {
+        pinned = pop.classList.contains('hidden');
+        if (pinned) { drawHints(input, pop, true); input.focus(); } else pop.classList.add('hidden');
+      },
+    }, '?');
     const keep = $('items') ? $('items').scrollTop : 0;
-    const draft = pane.querySelector('.add input') ? pane.querySelector('.add input').value : '';
-    pane.replaceChildren(body, el('div', { className: 'add' }, el('span', { html: icon('plus') }), input));
+    const prevInput = pane.querySelector('.add input');
+    const draft = prevInput ? prevInput.value : '';
+    const hadFocus = prevInput && document.activeElement === prevInput;
+    pane.replaceChildren(body, pop, el('div', { className: 'add' }, el('span', { html: icon('plus') }), input, help));
     body.scrollTop = keep;
     if (draft) input.value = draft;
+    if (hadFocus) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
   }
 
   let note = { text: '', saved: '', mode: 'file', file: null, connected: false };
@@ -159,7 +340,7 @@
     if (!res || res.error) return;
     const modeChanged = res.mode !== note.mode || res.file !== note.file || res.connected !== note.connected;
     const dirty = area && area.value !== note.saved;
-    note = { ...note, mode: res.mode, file: res.file, connected: res.connected };
+    note = { ...note, mode: res.mode, file: res.file, path: res.path, connected: res.connected };
     if (!area || force || modeChanged || !dirty) {
       conflictText = null;
       note.saved = res.text;
@@ -189,7 +370,11 @@
     const foot = $('noteFoot');
     if (!foot) return;
     if (!note.connected) {
-      foot.replaceChildren(el('span', { className: 'file muted' }, tr('Stored locally')), el('button', { className: 'chip', onClick: () => ob.configMenu() }, el('span', {}, tr('Connect Obsidian'))));
+      foot.replaceChildren(
+        el('button', { className: 'file', title: note.path ? `${note.path}\n${tr('Click to open in the default editor')}` : '', onClick: () => ob.note.openLocal() }, note.file || tr('Stored locally')),
+        el('div', { className: 'seg' },
+          el('button', { title: tr('Open another .txt file'), onClick: () => switchLocal(() => ob.note.pickLocal()) }, tr('File…')),
+          el('button', { title: tr('Create a new note in the storage folder'), onClick: () => switchLocal(() => ob.note.newLocal()) }, tr('New'))));
     } else {
       foot.replaceChildren(
         el('button', { className: 'file', title: tr('Open in Obsidian'), onClick: () => note.file && ob.calendar.openFile(note.file) }, note.file || ''),
@@ -197,6 +382,14 @@
           el('button', { className: note.mode === 'file' ? 'on' : '', onClick: () => setMode('file') }, tr('File')),
           el('button', { className: note.mode === 'daily' ? 'on' : '', onClick: () => setMode('daily') }, tr('Today'))));
     }
+  }
+
+  async function switchLocal(run) {
+    if (area && area.value !== note.saved) { await ob.note.write(area.value); note.saved = area.value; }
+    const res = await run();
+    if (res && res.error) { toast(tr('Could not open the file')); return; }
+    await loadNote({ force: true });
+    if (area) area.focus();
   }
 
   async function setMode(mode) {
@@ -223,11 +416,20 @@
 
   (async () => {
     W.init({
-      menu: () => [{ id: 'ob', label: tr('Obsidian Settings…'), run: () => ob.configMenu() }],
+      menu: () => [
+        ...(tab === 'tasks' ? [
+          { id: 'sort:asc', label: tr('Sort by Creation Time: Oldest First'), run: () => sortBy('asc') },
+          { id: 'sort:desc', label: tr('Sort by Creation Time: Newest First'), run: () => sortBy('desc') },
+          { type: 'separator' },
+        ] : []),
+        { id: 'ob', label: tr('Obsidian Settings…'), run: () => ob.configMenu() },
+        ...(status.connected ? [] : [{ id: 'local', label: tr('Open Storage Folder'), run: () => api.local.openFolder() }]),
+      ],
     });
     status = (await ob.status()) || status;
     const st = (await api.state.get()) || {};
     doneOpen = !!st.doneOpen;
+    sortDir = st.sortDir === 'desc' || st.sortDir === 'asc' ? st.sortDir : null;
     shell();
     const first = await ob.tasks.list();
     if (first && first.tasks) list = first;

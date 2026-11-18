@@ -26,6 +26,7 @@ class WidgetManager {
     this.drag = null;
     this.dragTimer = null;
     this.settling = null;
+    this.onVisibility = () => {};
   }
 
   enabled(key) { return this.store.get('visible', {})[key] !== false; }
@@ -136,8 +137,8 @@ class WidgetManager {
       windows: () => [...this.wins.values()],
       foreground: () => pin.foreground(),
       isOurs: (hwnd) => [...this.wins.values()].some((w) => !w.isDestroyed() && pin.handleOf(w) === hwnd),
-      raise: (w) => pin.raise(w),
-      lower: (w) => { if (!w.isFocused()) pin.lower(w); },
+      raise: (w) => { w.setAlwaysOnTop(true); pin.raise(w); },
+      lower: (w) => { w.setAlwaysOnTop(false); if (!w.isFocused()) pin.lower(w); },
       enabled: () => this.behaviorCfg().raiseOnDesktop,
       busy: () => !!this.drag || !!this.settling,
       log: (m) => console.info(m),
@@ -152,7 +153,7 @@ class WidgetManager {
       ...FRAMELESS, x: b[0], y: b[1], width: b[2], height: b[3],
       ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
       title: `Polaris — ${def.title}`,
-      webPreferences: webPreferences(this.preload, { backgroundThrottling: false }),
+      webPreferences: webPreferences(this.preload),
     });
     const wcId = win.webContents.id;
     this.wins.set(key, win);
@@ -162,7 +163,7 @@ class WidgetManager {
     this.watchHealth(win, key);
     win.once('ready-to-show', () => { win.showInactive(); pin.lower(win); });
     win.on('blur', () => { if (this.drag) this.endDrag(); if (!(this.keeper && this.keeper.raised)) pin.lower(win); });
-    win.on('closed', () => { this.wins.delete(key); this.keyByWc.delete(wcId); });
+    win.on('closed', () => { if (this.wins.get(key) === win) this.wins.delete(key); this.keyByWc.delete(wcId); });
     this.load(win, key);
     if (this.dev) win.webContents.openDevTools({ mode: 'detach' });
     return win;
@@ -376,8 +377,16 @@ class WidgetManager {
       if (!win) this.create(key);
       else { win.showInactive(); pin.lower(win); }
     } else if (win) {
-      win.hide();
+      this.wins.delete(key);
+      this.keyByWc.delete(win.webContents.id);
+      win.destroy();
     }
+    this.onVisibility();
+  }
+
+  showAll() {
+    for (const k of ORDER) if (!this.enabled(k)) this.setVisible(k, true);
+    this.onVisibility();
   }
 
   showAllReset() {
@@ -390,6 +399,7 @@ class WidgetManager {
       if (!win) this.create(k);
       else { this.applyBounds(k, b); win.showInactive(); pin.lower(win); }
     }
+    this.onVisibility();
   }
 
   setLocked(flag) {

@@ -10,7 +10,7 @@ function createTray({ tr, wm, widgets, shortcuts, capture, openSettings, setThem
   const tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
 
   const buildMenu = () => Menu.buildFromTemplate([
-    { label: tr('Settings & Appearance…'), click: () => openSettings('look') },
+    { label: tr('Settings & Appearance…'), click: () => openSettings('general') },
     { label: tr('Quick Capture…'), click: () => capture.show(), accelerator: shortcuts.capture },
     { label: tr('Show Widgets'), click: () => wm.peek(), accelerator: shortcuts.peek },
     { type: 'separator' },

@@ -123,6 +123,7 @@ body[data-locked="true"] .rz { display: none; }
 .modal-title { font-weight: 600; margin-bottom: 8px; }
 .modal input { width: 100%; padding: 7px 10px; border-radius: 8px; background: var(--fill); }
 .modal-note { margin-top: 6px; font-size: 11.5px; line-height: 1.35; color: var(--red); }
+.modal-hint { margin-top: 6px; font-size: 11.5px; line-height: 1.35; color: var(--fg2); }
 .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .modal-btns button { padding: 5px 14px; border-radius: 8px; background: var(--fill); font-weight: 500; }
 .modal-btns button.primary { background: var(--accent); color: var(--on-accent); }

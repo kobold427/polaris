@@ -85,7 +85,11 @@
             className: `chk${task.done ? ' on' : ''}`, html: icon('check'), 'data-nodrag': true,
             onClick: async () => { await ob.calendar.toggleAt(ref); load(); },
           }),
-          el('div', { className: 'tt', title: task.file || '', onDblclick: () => { if (task.file) ob.calendar.openFile(task.file); } }, task.title)));
+          el('div', { className: 'tt', title: task.file || '', onDblclick: () => { if (task.file) ob.calendar.openFile(task.file); } }, task.title),
+          el('button', {
+            className: 'icon-btn del', html: icon('x'), title: t('Delete'), 'data-nodrag': true,
+            onClick: async () => { await ob.calendar.removeAt(ref); load(); },
+          })));
       }
     }
     const input = el('input', { type: 'text', placeholder: t('Add task for {date}', { date: shortDate(d) }), maxlength: '200', 'data-nodrag': true });
@@ -159,9 +163,12 @@
   ob.calendar.on(load);
   ob.onStatus(load);
   api.calendarPrefs.on((p) => { prefs = p; load(); });
-  setInterval(() => {
+  const rollover = () => {
+    if (document.hidden) return;
     const t = ymd(new Date());
     if (t !== today) { today = t; load(); }
-  }, 30 * 1000);
+  };
+  setInterval(rollover, 30 * 1000);
+  document.addEventListener('visibilitychange', rollover);
   api.calendarPrefs.get().then((p) => { if (p && !p.error) prefs = p; }).finally(load);
 })();

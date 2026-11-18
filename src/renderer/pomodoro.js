@@ -3,17 +3,14 @@
   const { api, el, icon, star, ask, init, hms, human, t } = W;
   const card = document.getElementById('card');
 
-  const LABEL = { work: t('Work'), short: t('Break'), long: t('Long Break') };
   const SAY = { work: t('Work'), short: t('Short Break'), long: t('Long Break') };
-  const R = 88;
-  const C = 2 * Math.PI * R;
 
   let st = null;
   let view = 'timer';
   let T = null;
   let S = null;
-  let seg = null;
   let viewBtn = null;
+  let top = null;
   let body = null;
 
   const color = (phase) => (st ? st.settings.colors[phase] : '#0a84ff');
@@ -38,16 +35,34 @@
     return { by, total };
   }
 
+  const companionKind = () => {
+    const k = st && st.settings.companion;
+    return window.Companion.KINDS.includes(k) ? k : 'off';
+  };
+  let builtCompanion = null;
+
+  function destroyTimer() {
+    if (!T) return;
+    if (T.pal) T.pal.destroy();
+    T = null;
+  }
+
+  const companionStage = () => (st.phase === 'work' ? 3 * Math.min(1, Math.max(0, 1 - remaining() / (st.durationMs || 1))) : 3);
+
+  const companionState = () => {
+    if (st.status === 'paused') return 'sleep';
+    if (st.status !== 'running') return 'idle';
+    return st.phase === 'work' ? 'work' : 'rest';
+  };
+
   function buildTimer() {
+    destroyTimer();
     T = {};
+    builtCompanion = companionKind();
+    const kind = companionKind();
     T.t = el('div', { className: 't' });
     T.s = el('div', { className: 's' });
-    const ring = el('div', {
-      className: 'ring',
-      html: `<svg viewBox="0 0 200 200"><circle class="track" cx="100" cy="100" r="${R}" fill="none" stroke-width="9"/><circle class="bar" cx="100" cy="100" r="${R}" fill="none" stroke-width="9" transform="rotate(-90 100 100)" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg>`,
-    });
-    T.bar = ring.querySelector('.bar');
-    ring.append(el('div', { className: 'mid' }, T.t, T.s));
+    T.pal = kind === 'off' ? null : window.Companion.create(kind);
     T.dot = el('i');
     T.name = el('span');
     T.subj = el('button', { className: 'subj', 'data-nodrag': true, title: t('Change subject'), onClick: subjectMenu },
@@ -59,44 +74,54 @@
     T.foot = el('div', { className: 'foot' }, T.dots, T.today);
     T.goKey = '';
     T.dotsN = -1;
-    body.replaceChildren(
-      ring, T.subj,
+    T.memo = {};
+    body.classList.toggle('nopal', !T.pal);
+    body.replaceChildren(...[
+      T.pal && el('div', { className: 'stage' }, T.pal.node),
+      el('div', { className: 'clock' }, T.t, T.s),
       el('div', { className: 'ctl' },
         el('button', { className: 'sm', 'data-nodrag': true, html: icon('reset'), title: t('Reset timer'), onClick: () => cmd('reset') }),
         T.go,
-        el('button', { className: 'sm', 'data-nodrag': true, html: icon('skip'), title: t('Skip to next phase'), onClick: () => cmd('skip') }),
+        el('button', { className: 'sm', 'data-nodrag': true, html: icon('skip'), title: t('Next phase (work → break → work)'), onClick: () => cmd('skip') }),
         T.end),
-      T.foot);
+      T.foot,
+    ].filter(Boolean));
   }
 
   function paintTimer() {
     const phase = st.phase;
     const col = color(phase);
     const rem = remaining();
-    const total = st.durationMs || 1;
-    T.t.textContent = fmt(rem);
-    T.s.textContent = st.status === 'paused' ? t('Paused') : st.status === 'running' ? SAY[phase] : phase === 'work' ? t('Ready to work') : SAY[phase];
-    T.bar.style.stroke = col;
-    T.bar.style.strokeDashoffset = String(C * (1 - Math.min(1, Math.max(0, rem / total))));
-    T.go.style.background = col;
+    const m = T.memo;
+    const put = (key, value, apply) => {
+      if (m[key] === value) return;
+      m[key] = value;
+      apply(value);
+    };
+    const clock = fmt(rem);
+    put('t', clock, (v) => { T.t.textContent = v; });
+    put('s', st.status === 'paused' ? `${t('Paused')} · ${SAY[phase]}` : st.status === 'running' ? SAY[phase] : phase === 'work' ? t('Ready to work') : SAY[phase], (v) => { T.s.textContent = v; });
+    if (T.pal) T.pal.set(companionState(), companionStage());
+    put('col', col, (v) => { T.go.style.background = v; });
     const key = st.status === 'running' ? 'pause' : 'play';
     if (T.goKey !== key) {
       T.goKey = key;
       T.go.innerHTML = icon(key);
       T.go.title = key === 'pause' ? t('Pause') : st.status === 'paused' ? t('Resume') : t('Start');
     }
-    T.end.disabled = !st.session;
-    T.dot.style.background = subjColor(st.subject);
-    T.name.textContent = st.subject;
+    put('end', !st.session, (v) => { T.end.disabled = v; });
+    put('dot', subjColor(st.subject), (v) => { T.dot.style.background = v; });
+    put('name', st.subject, (v) => { T.name.textContent = v; });
     const n = st.settings.longEvery;
     if (T.dotsN !== n) {
       T.dotsN = n;
       T.dots.replaceChildren(...Array.from({ length: n }, () => el('i')));
+      m.cycle = -1;
     }
-    T.foot.style.setProperty('--c', color('work'));
-    [...T.dots.children].forEach((d, i) => d.classList.toggle('on', i < st.cycle));
-    T.today.textContent = t('today {time}', { time: hms(todayTotals().total) });
-    document.title = st.status === 'running' ? `${fmt(rem)} — ${SAY[phase]}` : t('Pomodoro');
+    put('wcol', color('work'), (v) => { T.foot.style.setProperty('--c', v); });
+    put('cycle', st.cycle, (c) => { [...T.dots.children].forEach((d, i) => d.classList.toggle('on', i < c)); });
+    put('today', t('today {time}', { time: hms(todayTotals().total) }), (v) => { T.today.textContent = v; });
+    put('title', st.status === 'running' ? `${clock} — ${SAY[phase]}` : t('Pomodoro'), (v) => { document.title = v; });
   }
 
   function buildSummary() {
@@ -154,27 +179,54 @@
     S.wkBar.style.background = goal > 0 && done >= goal ? 'var(--green)' : color('work');
   }
 
+  function buildTop() {
+    if (view === 'timer') {
+      viewBtn = el('button', { className: 'icon-btn', 'data-nodrag': true, title: t('Summary for today'), html: icon('list'), onClick: toggleView });
+      top.replaceChildren(T.subj, viewBtn);
+    } else {
+      viewBtn = el('button', { className: 'icon-btn', 'data-nodrag': true, title: t('Back to timer'), html: icon('chevL'), onClick: toggleView });
+      top.replaceChildren(viewBtn, el('div', { className: 'ttl' }, t('Summary for today')));
+    }
+    top.classList.toggle('sumtop', view === 'summary');
+  }
+
   function shell() {
-    seg = el('div', { className: 'seg' }, ['work', 'short', 'long'].map((k) => el('button', { 'data-nodrag': true, dataset: { phase: k }, onClick: () => cmd('setPhase', k) }, LABEL[k])));
-    viewBtn = el('button', { className: 'icon-btn', 'data-nodrag': true, title: t('Summary for today'), html: icon('list'), onClick: toggleView });
+    top = el('div', { className: 'top' });
     body = el('div', { className: 'body' });
-    card.replaceChildren(el('div', { className: 'top' }, seg, viewBtn), body);
+    card.replaceChildren(top, body);
     if (view === 'timer') buildTimer(); else buildSummary();
+    buildTop();
     paint();
+  }
+
+  let beat = 0;
+
+  function arm() {
+    clearTimeout(beat);
+    beat = 0;
+    if (!st || document.hidden || (st.status !== 'running' && !st.seg)) return;
+    const rem = view === 'timer' && st.status === 'running' ? remaining() : 0;
+    const wait = rem > 0 ? rem - (Math.ceil(rem / 1000) - 1) * 1000 : 1000;
+    beat = setTimeout(paint, Math.max(40, Math.min(1000, wait)));
   }
 
   function paint() {
     if (!st || !body) return;
-    for (const b of seg.children) b.classList.toggle('on', b.dataset.phase === st.phase);
-    viewBtn.style.color = view === 'summary' ? 'var(--accent)' : '';
-    viewBtn.title = view === 'summary' ? t('Timer') : t('Summary for today');
+    if (view === 'timer' && builtCompanion !== companionKind()) { buildTimer(); buildTop(); }
     if (view === 'timer') paintTimer(); else paintSummary();
+    arm();
   }
 
   function toggleView() {
     view = view === 'timer' ? 'summary' : 'timer';
     api.state.set({ view });
-    if (view === 'timer') buildTimer(); else buildSummary();
+    if (view === 'timer') buildTimer();
+    else {
+      destroyTimer();
+      body.classList.remove('nopal');
+      buildSummary();
+    }
+    buildTop();
     paint();
   }
 
@@ -222,6 +274,13 @@
       { id: 'sw', label: t('Subject…'), run: subjectMenu },
       { id: 'end', label: t('End Session'), enabled: !!(st && st.session), run: () => cmd('end') },
       { id: 'sum', label: view === 'timer' ? t('Show Summary') : t('Show Timer'), run: toggleView },
+      {
+        id: 'pal', label: t('Companion'),
+        submenu: [
+          ...[['lotus', 'Lotus'], ['star', 'Star'], ['off', 'Off']].map(([id, label]) => (
+            { id: `pal:${id}`, label: t(label), type: 'radio', checked: companionKind() === id, run: () => cmd('setSettings', { companion: id }) })),
+        ],
+      },
       { type: 'separator' },
       { id: 'set', label: t('Pomodoro Settings…'), run: () => api.settings.open('pomodoro') },
     ],
@@ -229,7 +288,7 @@
 
   api.pomodoro.on((s) => { st = s; paint(); });
   api.pomodoro.onSessionEnd((sum) => { if (sum.reason === 'ended') showResult(sum); });
-  setInterval(() => { if (st && !document.hidden) paint(); }, 250);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) paint(); });
 
   (async () => {
     const saved = (await api.state.get()) || {};

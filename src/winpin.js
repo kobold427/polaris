@@ -43,14 +43,21 @@ const lower = (win) => restack(win, HWND_BOTTOM);
 
 const raise = (win) => restack(win, HWND_TOP);
 
+const classBuf = Buffer.alloc(512);
+let lastHwnd = 0n;
+let lastClass = '';
+
 function foreground() {
   if (!getForegroundWindow || !getClassName) return null;
   try {
     const hwnd = getForegroundWindow();
     if (!hwnd) return { hwnd: 0n, cls: '' };
-    const buf = Buffer.alloc(512);
-    const length = getClassName(hwnd, buf, 256);
-    return { hwnd, cls: length > 0 ? buf.toString('utf16le', 0, length * 2) : '' };
+    if (hwnd !== lastHwnd) {
+      const length = getClassName(hwnd, classBuf, 256);
+      lastClass = length > 0 ? classBuf.toString('utf16le', 0, length * 2) : '';
+      lastHwnd = hwnd;
+    }
+    return { hwnd, cls: lastClass };
   } catch (e) {
     console.warn('winpin.foreground:', e.message);
     return null;

@@ -50,6 +50,13 @@
     return box;
   }
 
+  function pipette(onPick) {
+    return el('button', {
+      className: 'pip', html: icon('pipette'), title: t('Pick a color from the screen'),
+      onClick: async () => { const color = await api.eyedropper.pick(); if (color && !color.error) onPick(color); },
+    });
+  }
+
   function colorPicker(presets, onPick) {
     const custom = el('input', { type: 'color', title: t('Custom color') });
     custom.addEventListener('input', debounce(() => onPick(custom.value), 120));
@@ -57,7 +64,7 @@
       title: color, style: `background:${color}`, dataset: { value }, onClick: () => onPick(value),
     })));
     return {
-      nodes: [swatches, custom],
+      nodes: [swatches, custom, pipette((color) => { custom.value = color; onPick(color); })],
       set(value, shown) {
         for (const b of swatches.children) b.classList.toggle('on', b.dataset.value.toLowerCase() === value.toLowerCase());
         if (custom.value !== shown) custom.value = shown;
@@ -149,7 +156,10 @@
     };
     P.every = numberField(2, 12, (v) => pomoCmd('setSettings', { longEvery: v }));
     P.auto = toggle((v) => pomoCmd('setSettings', { autoStart: v }));
+    P.companion = el('select', { title: t('Companion'), onChange: () => pomoCmd('setSettings', { companion: P.companion.value }) },
+      [['lotus', 'Lotus'], ['star', 'Star'], ['off', 'Off']].map(([value, label]) => el('option', { value }, t(label))));
     P.idle = numberField(5, 240, (v) => pomoCmd('setSettings', { idleEndMin: v }));
+    P.idleOn = toggle((idleEnd) => pomoCmd('setSettings', { idleEnd }));
 
     P.sound = toggle((sound) => setAlerts({ sound }));
     P.tone = el('select', { title: t('Sound') },
@@ -191,7 +201,8 @@
         PHASES.map(durationRow),
         row(t('Long break after'), [P.every, t('pomodoros')]),
         row(t('Start next phase automatically'), P.auto),
-        row(t('End session after idle time'), [P.idle, t('min')])),
+        row([t('Companion'), el('small', { className: 'hint' }, t('Grows during focus, in full bloom on breaks, fades on pause.'))], P.companion),
+        row(t('End session after idle time'), [P.idle, t('min'), P.idleOn])),
       ...group(t('Alerts'),
         row(t('Play a sound when a phase ends'), P.sound),
         row(t('Sound'), [P.tone, P.play]),
@@ -216,7 +227,10 @@
     for (const [phase, input] of Object.entries(P.durations)) input.set(s.durations[phase]);
     P.every.set(s.longEvery);
     P.auto.set(s.autoStart);
+    P.companion.value = s.companion;
     P.idle.set(s.idleEndMin);
+    P.idle.disabled = !s.idleEnd;
+    P.idleOn.set(s.idleEnd);
     for (const [phase, picker] of Object.entries(P.colors)) picker.set(s.colors[phase], s.colors[phase]);
     P.dailyGoal.set(s.goalMin);
     P.weeklyGoal.set(Math.round(s.weeklyGoalMin / 60));
@@ -267,6 +281,7 @@
     P.subjects.replaceChildren(...s.subjects.map((subject) => {
       const color = el('input', { type: 'color', value: subject.color });
       color.addEventListener('input', debounce(() => pomoCmd('updateSubject', { name: subject.name, patch: { color: color.value } }), 120));
+      const pick = pipette((value) => { color.value = value; pomoCmd('updateSubject', { name: subject.name, patch: { color: value } }); });
       const name = el('input', { className: 'name', type: 'text', value: subject.name, maxlength: 40, spellcheck: 'false' });
       name.addEventListener('change', () => {
         const value = name.value.trim();
@@ -279,7 +294,7 @@
       });
       const current = el('div', { className: 'cur' }, subject.name === s.subject ? t('current') : el('button', { onClick: () => pomoCmd('setSubject', subject.name) }, t('select')));
       const remove = el('button', { className: 'del', title: t('Delete subject'), html: icon('x'), disabled: s.subjects.length <= 1, onClick: () => pomoCmd('removeSubject', subject.name) });
-      return el('div', { className: 'row subj' }, color, name, current, remove);
+      return el('div', { className: 'row subj' }, color, pick, name, current, remove);
     }));
   }
 
@@ -287,6 +302,7 @@
   let behavior = { raiseOnDesktop: true };
   let calendar = { firstDay: 1 };
   let language = { setting: 'en', lang: 'en' };
+  let local = { folder: '' };
 
   function buildGeneral() {
     G.language = segmented([['auto', t('Auto')], ['en', 'English'], ['ru', 'Русский']], async (setting) => {
@@ -298,6 +314,11 @@
       const res = await api.language.set(setting);
       if (res && res.setting) language = res;
     });
+    G.widgets = el('div');
+    G.localPath = el('small', { className: 'hint path' });
+    G.localPick = el('button', { className: 'btn small', onClick: () => api.local.pickFolder().then((info) => { if (info && info.folder) { local = info; syncGeneral(); } }) }, t('Choose…'));
+    G.localOpen = el('button', { className: 'btn small', onClick: () => api.local.openFolder() }, t('Open'));
+    G.showAll = el('button', { className: 'btn small', onClick: () => api.widgets.showAll().then(setWidgets) }, t('Show All'));
     G.raise = toggle((raiseOnDesktop) => api.behavior.set({ raiseOnDesktop }).then((b) => { if (b && !b.error) behavior = b; }));
     G.firstDay = segmented([[1, t('Mon')], [0, t('Sun')], [6, t('Sat')]], (v) => api.calendarPrefs.set({ firstDay: Number(v) }).then((c) => { if (c && !c.error) { calendar = c; syncGeneral(); } }));
     const log = el('button', { className: 'btn', onClick: () => api.diag.openLog() }, t('Open Log Folder'));
@@ -308,13 +329,37 @@
     } }, t('Copy Diagnostics'));
     document.getElementById('general').replaceChildren(
       ...group(t('Language'), row(t('Interface language'), G.language)),
-      ...group(t('Desktop'), row(t('Keep widgets visible on “Show desktop”'), G.raise)),
+      ...group(t('Widgets'), G.widgets, el('div', { className: 'row' }, el('div', { className: 'lbl muted' }, t('Hidden widgets can also be returned from the tray icon menu.')), el('div', { className: 'ctl' }, G.showAll))),
+      ...group(t('Desktop'), row([t('Keep widgets visible on “Show desktop”'), el('small', { className: 'hint' }, t('Widgets stay on top while the desktop is shown (Win+D) and go back behind windows when you open an app.'))], G.raise)),
       ...group(t('Calendar'), row(t('Week starts on'), G.firstDay)),
+      ...group(t('Storage without Obsidian'),
+        row([t('Folder for tasks and notes'), G.localPath], [G.localOpen, G.localPick])),
       el('div', { className: 'actions' }, log, copy),
     );
   }
 
+  function setWidgets(list) {
+    if (!Array.isArray(list)) return;
+    look.widgets = list;
+    renderWidgets();
+    syncLook();
+  }
+
+  function renderWidgets() {
+    if (!G.widgets) return;
+    G.widgets.replaceChildren(...look.widgets.map((w) => {
+      const sw = toggle((on) => api.widgets.setVisible(w.key, on).then(setWidgets));
+      sw.set(w.visible !== false);
+      return row(t(w.title), sw);
+    }));
+    G.showAll.disabled = look.widgets.every((w) => w.visible !== false);
+  }
+
   function syncGeneral() {
+    G.localPath.textContent = obsidian.connected
+      ? `${local.folder || ''} — ${t('used when Obsidian is not connected')}`
+      : `${local.folder || ''} — ${t('tasks in Tasks.txt, notes in .txt files')}`;
+    G.localPath.title = local.folder || '';
     G.language.set(language.setting);
     G.raise.set(behavior.raiseOnDesktop);
     G.firstDay.set(calendar.firstDay);
@@ -323,7 +368,7 @@
   const TABS = [['general', t('General')], ['look', t('Appearance')], ['pomo', t('Pomodoro')]];
   const TAB_ALIASES = { pomodoro: 'pomo' };
   function showTab(name) {
-    const key = TAB_ALIASES[name] || (TABS.some(([k]) => k === name) ? name : 'look');
+    const key = TAB_ALIASES[name] || (TABS.some(([k]) => k === name) ? name : 'general');
     for (const b of document.getElementById('tabs').children) b.classList.toggle('on', b.dataset.v === key);
     for (const [id] of TABS) document.getElementById(id).hidden = id !== key;
     document.title = `${t('Settings')} — ${TABS.find(([k]) => k === key)[1]}`;
@@ -341,18 +386,20 @@
   api.appearance.on((cfg) => { look.cfg = A.config(cfg); syncLook(); });
   api.theme.on((theme) => { look.theme = theme; syncLook(); });
   api.calendarPrefs.on((c) => { calendar = c; syncGeneral(); });
+  api.widgets.on(setWidgets);
   api.pomodoro.on((s) => { pomo = s; syncPomo(); });
-  api.obsidian.onStatus((s) => { obsidian = s; syncPomo(); });
+  api.obsidian.onStatus((s) => { obsidian = s; if (s.local) local = s.local; syncPomo(); syncGeneral(); });
 
   (async () => {
     let cfg;
-    [cfg, look.widgets, look.grid, look.theme, pomo, obsidian, behavior, calendar, language] = await Promise.all([
+    [cfg, look.widgets, look.grid, look.theme, pomo, obsidian, behavior, calendar, language, local] = await Promise.all([
       api.appearance.get(), api.widgets.list(), api.grid.get(), api.theme.get(), api.pomodoro.state(), api.obsidian.status(),
-      api.behavior.get(), api.calendarPrefs.get(), api.language.get(),
+      api.behavior.get(), api.calendarPrefs.get(), api.language.get(), api.local.get(),
     ]);
     look.cfg = A.config(cfg);
     syncLook();
     syncPomo();
     syncGeneral();
+    renderWidgets();
   })();
 })();

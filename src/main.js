@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  app, BrowserWindow, Menu, Notification, clipboard, globalShortcut, nativeImage, nativeTheme, powerMonitor, screen, session, shell,
+  app, BrowserWindow, Menu, Notification, clipboard, desktopCapturer, globalShortcut, nativeImage, nativeTheme, powerMonitor, screen, session, shell,
 } = require('electron');
 const { Logger } = require('./log');
 const { Store } = require('./store');
@@ -19,6 +19,7 @@ const { Hotkeys } = require('./hotkeys');
 const { CaptureWindow } = require('./capture');
 const { BannerWindow } = require('./banner');
 const { SettingsWindow } = require('./settings-window');
+const { EyeDropper } = require('./eyedropper');
 const { AudioPlayer } = require('./audio');
 const { Alerts } = require('./alerts');
 const { createIpc } = require('./ipc');
@@ -82,9 +83,10 @@ async function start() {
   const banner = new BannerWindow({ BrowserWindow, screen, preload, rendererDir, getLang });
   const audio = new AudioPlayer({ BrowserWindow, preload, rendererDir, log: (message) => logger.warn(message) });
   const settings = new SettingsWindow({ preload, rendererDir, getLang, title: () => tr('Settings') });
-  const ob = new ObsidianSync(store, { openExternal: (url) => shell.openExternal(url) });
+  const eyedropper = new EyeDropper({ BrowserWindow, screen, desktopCapturer, preload, rendererDir, getLang });
+  const ob = new ObsidianSync(store, { openExternal: (url) => shell.openExternal(url), localDir: path.join(app.getPath('documents'), 'Polaris') });
   const backdrop = new Backdrop({ nativeImage, screen, powerMonitor });
-  const weather = new WeatherService({ store, getLang });
+  const weather = new WeatherService({ store, getLang, isActive: () => wm.enabled('weather') });
   const diagnostics = createDiagnostics({ app, screen, pin, wm, ob, backdrop, order: ORDER, logger });
 
   logger.info('=== start ===');
@@ -206,12 +208,14 @@ async function start() {
   };
 
   const widgetList = ORDER.map((key) => ({ key, title: DEFS[key].title }));
+  const widgetStates = () => widgetList.map((widget) => ({ ...widget, visible: wm.enabled(widget.key) }));
+  wm.onVisibility = () => { settings.send('widgets:update', widgetStates()); weather.wake(); };
 
   registerHandlers({
     ipc: createIpc(rendererDir),
-    store, wm, ob, engine, pomodoroLog, weather, backdrop, capture, banner, alerts, settings, obsidianMenu, appearance,
+    store, wm, ob, engine, pomodoroLog, weather, backdrop, capture, banner, alerts, settings, obsidianMenu, appearance, eyedropper,
     broadcast, language, setLanguage, setTheme, setGrid, calendarPrefs, openLogFolder, copyDiagnostics, tr,
-    widgets: () => widgetList.map((widget) => ({ ...widget, visible: wm.enabled(widget.key) })),
+    widgets: widgetStates,
   });
 
   const toggleTimer = () => {
@@ -264,6 +268,7 @@ async function start() {
     event.preventDefault();
     (async () => {
       hotkeys.dispose();
+      eyedropper.finish(null);
       capture.dispose();
       banner.dispose();
       audio.dispose();

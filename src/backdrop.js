@@ -152,17 +152,28 @@ async function detect({ platform = process.platform, exec = defaultExec, env = p
   return { via: reg ? 'registry' : 'none', monitors: [{ rect: null, file: null }], style, color, notes };
 }
 
-async function signature({ platform = process.platform, exec = defaultExec, env = process.env, fsImpl = fs } = {}) {
-  if (platform !== 'win32') return 'none';
+const statBits = (files, fsImpl) => files.map((f) => {
+  const s = f && statFile(fsImpl, f);
+  return s ? `${f}:${s.mtimeMs}:${s.size}` : '';
+});
+
+async function readSignature({ platform = process.platform, exec = defaultExec, env = process.env, fsImpl = fs } = {}) {
+  if (platform !== 'win32') return { sig: 'none', wp: null };
   const [desk, colors] = await Promise.all([exec('reg', ['query', 'HKCU\\Control Panel\\Desktop']), exec('reg', ['query', 'HKCU\\Control Panel\\Colors', '/v', 'Background'])]);
   const wp = parseReg(desk, 'WallPaper');
   const bits = [wp, parseReg(desk, 'WallpaperStyle'), parseReg(desk, 'TileWallpaper'), parseReg(colors, 'Background')];
-  for (const f of [wp, ...cacheFiles(env, fsImpl, 4)]) {
-    const s = f && statFile(fsImpl, f);
-    bits.push(s ? `${f}:${s.mtimeMs}:${s.size}` : '');
-  }
-  return bits.join('|');
+  bits.push(...statBits([wp, ...cacheFiles(env, fsImpl, 4)], fsImpl));
+  return { sig: bits.join('|'), wp };
 }
+
+const signature = async (options = {}) => (await readSignature(options)).sig;
+
+function quickSignature({ platform = process.platform, env = process.env, fsImpl = fs } = {}, wp) {
+  if (platform !== 'win32') return 'none';
+  return statBits([wp, ...cacheFiles(env, fsImpl, 4)], fsImpl).join('|');
+}
+
+const FULL_CHECK_EVERY = 10;
 
 function assignMonitors(displays, monitors) {
   const byPos = (a, b) => a[0] - b[0] || a[1] - b[1];
@@ -185,6 +196,9 @@ class Backdrop extends EventEmitter {
     super();
     Object.assign(this, { nativeImage, screen, powerMonitor, exec, fsImpl, env, platform, now, maxWidth, quality });
     this.signature = null;
+    this.quick = null;
+    this.wp = null;
+    this.checks = 0;
     this.timer = null;
     this.running = null;
     this.rerun = false;
@@ -278,9 +292,13 @@ class Backdrop extends EventEmitter {
   }
 
   async check() {
-    const next = await signature(this);
-    const changed = this.signature !== null && next !== this.signature;
-    this.signature = next;
+    this.checks = (this.checks + 1) % FULL_CHECK_EVERY;
+    if (this.signature !== null && this.checks !== 0 && quickSignature(this, this.wp) === this.quick) return;
+    const { sig, wp } = await readSignature(this);
+    this.wp = wp;
+    this.quick = quickSignature(this, wp);
+    const changed = this.signature !== null && sig !== this.signature;
+    this.signature = sig;
     if (changed) await this.refresh();
   }
 

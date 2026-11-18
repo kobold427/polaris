@@ -11,7 +11,21 @@ const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
 const senderWindow = (event) => BrowserWindow.fromWebContents(event.sender) || undefined;
 
-function commonHandlers({ ipc: { on, handle }, store, wm, backdrop, language, setLanguage, openLogFolder, copyDiagnostics, widgets }) {
+const HIDE_HINTS = 3;
+
+function hiddenHint(store, tr) {
+  const hints = store.get('hints', {}) || {};
+  const shown = Number(hints.hidden) || 0;
+  if (shown >= HIDE_HINTS || !Notification.isSupported()) return;
+  store.set('hints', { ...hints, hidden: shown + 1 });
+  new Notification({
+    title: tr('Widget hidden'),
+    body: tr('To bring it back: right-click the Polaris tray icon → Widgets, or open Settings → General → Widgets.'),
+    silent: true,
+  }).show();
+}
+
+function commonHandlers({ ipc: { on, handle }, store, wm, backdrop, language, setLanguage, openLogFolder, copyDiagnostics, widgets, tr }) {
   handle('language:get', () => language());
   handle('language:set', (_e, value) => setLanguage(value));
 
@@ -24,6 +38,14 @@ function commonHandlers({ ipc: { on, handle }, store, wm, backdrop, language, se
 
   handle('locked:get', () => wm.isLocked());
   handle('widgets:get', () => widgets());
+  handle('widgets:setVisible', (_e, key, flag) => {
+    if (widgets().some((w) => w.key === key)) wm.setVisible(key, !!flag);
+    return widgets();
+  });
+  handle('widgets:showAll', () => {
+    wm.showAll();
+    return widgets();
+  });
   handle('win:getBounds', (e) => wm.boundsPayload(wm.keyOf(e.sender)));
   handle('backdrop:get', () => backdrop.payload());
 
@@ -31,7 +53,7 @@ function commonHandlers({ ipc: { on, handle }, store, wm, backdrop, language, se
     const key = wm.keyOf(e.sender);
     const id = await popup(senderWindow(e), items);
     if (id === '__hide') {
-      if (key) wm.setVisible(key, false);
+      if (key) { wm.setVisible(key, false); hiddenHint(store, tr); }
       return null;
     }
     if (id === '__lock') {
@@ -69,7 +91,14 @@ function commonHandlers({ ipc: { on, handle }, store, wm, backdrop, language, se
   handle('diag:copy', () => copyDiagnostics());
 }
 
-function settingsHandlers({ ipc: { handle }, store, wm, settings, appearance, setTheme, setGrid, calendarPrefs, engine, broadcast }) {
+function settingsHandlers({ ipc: { handle }, store, wm, settings, appearance, setTheme, setGrid, calendarPrefs, engine, broadcast, eyedropper }) {
+  handle('eyedropper:pick', () => eyedropper.pick());
+  handle('eyedropper:shot', (e) => eyedropper.shotFor(e.sender));
+  handle('eyedropper:done', (_e, color) => {
+    eyedropper.finish(color);
+    return true;
+  });
+
   handle('settings:open', (_e, tab) => {
     settings.open(tab);
     return true;
@@ -114,13 +143,15 @@ function weatherHandlers({ ipc: { handle }, weather }) {
   handle('weather:setCity', (_e, name) => weather.setCity(name));
   handle('weather:setPlace', (_e, place) => weather.setPlace(place));
   handle('weather:setUnits', (_e, units) => weather.setUnits(units));
+  handle('weather:setSource', (_e, cfg) => weather.setSource(cfg || {}));
+  handle('weather:setFallback', (_e, flag) => weather.setFallback(flag));
   handle('weather:refresh', async () => {
     await weather.refresh();
     return weather.snapshot();
   });
 }
 
-function obsidianHandlers({ ipc: { handle }, ob, obsidianMenu }) {
+function obsidianHandlers({ ipc: { handle }, ob, obsidianMenu, tr }) {
   handle('ob:status', () => ob.status());
   handle('ob:configMenu', (e) => {
     Menu.buildFromTemplate(obsidianMenu.template()).popup({ window: senderWindow(e) });
@@ -144,6 +175,33 @@ function obsidianHandlers({ ipc: { handle }, ob, obsidianMenu }) {
   handle('ob:openDaily', (_e, date) => ob.openDaily(date));
   handle('ob:openFile', (_e, rel) => ob.openFile(rel));
   handle('ob:toggleAt', (_e, ref) => ob.toggleAt(ref));
+  handle('ob:removeAt', (_e, ref) => ob.removeAt(ref));
+  handle('ob:tasks:move', (_e, ref, target, after) => ob.moveTask(ref, target, after));
+  handle('ob:tasks:sort', (_e, dir) => ob.sortTasks(dir));
+
+  handle('local:get', () => ob.localInfo());
+  handle('local:pickFolder', async (e) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(senderWindow(e), {
+      title: tr('Folder for tasks and notes'), defaultPath: ob.localDir(), properties: ['openDirectory', 'createDirectory'],
+    });
+    if (canceled || !filePaths[0]) return ob.localInfo();
+    return ob.setLocalFolder(filePaths[0]);
+  });
+  handle('local:openFolder', async () => {
+    fs.mkdirSync(ob.localDir(), { recursive: true });
+    return shell.openPath(ob.localDir());
+  });
+  handle('ob:note:pickLocal', async (e) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(senderWindow(e), {
+      title: tr('Note file'), defaultPath: ob.localDir(), properties: ['openFile', 'promptToCreate'],
+      filters: [{ name: tr('Text'), extensions: ['txt'] }, { name: tr('All files'), extensions: ['*'] }],
+    });
+    if (canceled || !filePaths[0]) return null;
+    if (!fs.existsSync(filePaths[0])) fs.writeFileSync(filePaths[0], '', 'utf8');
+    return ob.setLocalNoteFile(filePaths[0]);
+  });
+  handle('ob:note:newLocal', () => ob.newLocalNote());
+  handle('ob:note:openLocal', () => (ob.vault ? false : shell.openPath(ob.localNoteAbs())));
 }
 
 function captureHandlers({ ipc: { handle }, store, ob, capture }) {

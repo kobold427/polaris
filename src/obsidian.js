@@ -15,6 +15,18 @@ const DEFAULTS = {
   locale: 'en',
 };
 
+const LOCAL_TASKS = 'Tasks.txt';
+const LOCAL_NOTE = 'Note.txt';
+
+function readText(abs) {
+  try {
+    const t = fs.readFileSync(abs, 'utf8');
+    return t.charCodeAt(0) === 0xFEFF ? t.slice(1) : t;
+  } catch {
+    return null;
+  }
+}
+
 class DiskFile {
   constructor(abs) { this.abs = abs; }
   async read() {
@@ -90,6 +102,7 @@ class ObsidianSync extends EventEmitter {
     this.index = new Map();
     this.watched = new Set();
     this.scanning = false;
+    this.indexed = false;
     this.rescan = false;
     this.lastDay = md.ymd(new Date());
     this.timers = [];
@@ -98,9 +111,84 @@ class ObsidianSync extends EventEmitter {
   get cfg() { return { ...DEFAULTS, ...(this.store.get('obsidian', {}) || {}) }; }
   saveCfg(patch) { this.store.set('obsidian', { ...(this.store.get('obsidian', {}) || {}), ...patch }); }
 
+  localDir() {
+    const dir = this.cfg.localFolder;
+    return typeof dir === 'string' && dir && path.isAbsolute(dir) ? dir : (this.opts.localDir || path.join(os.homedir(), 'Documents', 'Polaris'));
+  }
+
+  localTasksAbs() { return path.join(this.localDir(), LOCAL_TASKS); }
+
+  localNoteAbs() {
+    const f = this.cfg.localNoteFile;
+    return typeof f === 'string' && f && path.isAbsolute(f) ? f : path.join(this.localDir(), LOCAL_NOTE);
+  }
+
+  localInfo() {
+    return { folder: this.localDir(), tasksFile: this.localTasksAbs(), noteFile: this.localNoteAbs() };
+  }
+
+  async _migrateLocal() {
+    for (const [key, abs] of [['localTasksMd', this.localTasksAbs()], ['localNoteMd', path.join(this.localDir(), LOCAL_NOTE)]]) {
+      const old = this.store.get(key, null);
+      if (typeof old !== 'string') continue;
+      try {
+        const f = new DiskFile(abs);
+        if (old.trim() && (await f.read()) === null) await f.write(old);
+        this.store.set(key, null);
+      } catch (e) {
+        console.warn(`local storage migration: ${e.message}`);
+      }
+    }
+  }
+
+  async setLocalFolder(dir) {
+    if (!dir || !path.isAbsolute(dir)) throw new Error('Invalid folder');
+    await fsp.mkdir(dir, { recursive: true });
+    const before = this.localInfo();
+    const target = path.resolve(dir);
+    if (path.resolve(before.folder) === target) return this.localInfo();
+    const noteInside = path.resolve(path.dirname(before.noteFile)) === path.resolve(before.folder);
+    const copies = [[before.tasksFile, path.join(target, LOCAL_TASKS)]];
+    if (noteInside) copies.push([before.noteFile, path.join(target, path.basename(before.noteFile))]);
+    for (const [from, to] of copies) {
+      const text = readText(from);
+      if (text !== null && readText(to) === null) await new DiskFile(to).write(text);
+    }
+    this.saveCfg({ localFolder: target, ...(noteInside ? { localNoteFile: path.join(target, path.basename(before.noteFile)) } : {}) });
+    this._localChanged();
+    return this.localInfo();
+  }
+
+  setLocalNoteFile(abs) {
+    if (!abs || !path.isAbsolute(abs)) throw new Error('Invalid file');
+    this.saveCfg({ localNoteFile: path.resolve(abs) });
+    this._localChanged();
+    return this.localInfo();
+  }
+
+  async newLocalNote(date = new Date()) {
+    const dir = this.localDir();
+    await fsp.mkdir(dir, { recursive: true });
+    const stamp = `${md.ymd(date)} ${md.pad(date.getHours())}-${md.pad(date.getMinutes())}`;
+    let abs = path.join(dir, `Note ${stamp}.txt`);
+    for (let i = 2; fs.existsSync(abs); i++) abs = path.join(dir, `Note ${stamp} (${i}).txt`);
+    await new DiskFile(abs).write('');
+    return this.setLocalNoteFile(abs);
+  }
+
+  _localChanged() {
+    if (this.vault) return;
+    this._rewatch();
+    this.emit('status', this.status());
+    this.emit('tasks');
+    this.emit('note');
+    this.emit('index');
+  }
+
   status() {
     const c = this.cfg;
     return {
+      local: this.localInfo(),
       connected: !!this.vault,
       vaultName: this.vault ? this.vault.name : null,
       vaultPath: this.vault ? this.vault.path : null,
@@ -113,11 +201,18 @@ class ObsidianSync extends EventEmitter {
 
   start() {
     const c = this.store.get('obsidian', {}) || {};
+    this.migrated = this._migrateLocal();
     if (c.vaultPath && fs.existsSync(c.vaultPath)) {
       this.connect(c.vaultPath, c.vaultId, { silent: true }).catch((e) => { this.error = e.message; });
+    } else {
+      this.migrated.then(() => { this._rewatch(); this.emit('tasks'); this.emit('note'); this.emit('index'); });
     }
     this.timers.push(setInterval(() => this._tick(), 30000));
-    this.timers.push(setInterval(() => this.scan(), this.opts.scanIntervalMs || 120000));
+    let beat = 0;
+    this.timers.push(setInterval(() => {
+      beat = (beat + 1) % 5;
+      if (!this.vaultWatcher || beat === 0) this.scan();
+    }, this.opts.scanIntervalMs || 120000));
   }
 
   stop() {
@@ -130,7 +225,8 @@ class ObsidianSync extends EventEmitter {
   async connect(vaultPath, vaultId, { silent = false } = {}) {
     if (!fs.existsSync(vaultPath) || !fs.statSync(vaultPath).isDirectory()) throw new Error('Vault folder not found');
     const known = detectVaults(this.opts.obsidianConfigPath).find((v) => path.resolve(v.path) === path.resolve(vaultPath));
-    const prevLocalTasks = this.store.get('localTasksMd', null);
+    await this.migrated;
+    const prevLocalTasks = readText(this.localTasksAbs());
     this.vault = { path: path.resolve(vaultPath), id: vaultId || (known && known.id) || null, name: path.basename(vaultPath) };
     this.error = null;
     this.saveCfg({ vaultPath: this.vault.path, vaultId: this.vault.id });
@@ -140,6 +236,7 @@ class ObsidianSync extends EventEmitter {
     }
     this._rewatch();
     this._watchVault();
+    this.indexed = false;
     this.scan();
     this.emit('status', this.status());
     this.emit('tasks');
@@ -149,9 +246,11 @@ class ObsidianSync extends EventEmitter {
   disconnect() {
     this._unwatchAll();
     this.vault = null;
+    this.indexed = false;
     this.cache.clear();
     this.index.clear();
     this.saveCfg({ vaultPath: null, vaultId: null });
+    this._rewatch();
     this.emit('status', this.status());
     this.emit('tasks');
     this.emit('note');
@@ -189,10 +288,10 @@ class ObsidianSync extends EventEmitter {
     return folder + name;
   }
 
-  tasksFileObj() { return this.vault ? new DiskFile(this.abs(this.cfg.tasksFile)) : new MemFile(this.store, 'localTasksMd'); }
+  tasksFileObj() { return this.vault ? new DiskFile(this.abs(this.cfg.tasksFile)) : new DiskFile(this.localTasksAbs()); }
 
   noteFileObj() {
-    if (!this.vault) return new MemFile(this.store, 'localNoteMd');
+    if (!this.vault) return new DiskFile(this.localNoteAbs());
     if (this.cfg.noteMode === 'daily') return new DiskFile(this.abs(this.dailyRel(new Date())));
     return new DiskFile(this.abs(this.cfg.noteFile));
   }
@@ -212,7 +311,7 @@ class ObsidianSync extends EventEmitter {
   _pub(t) {
     return {
       line: t.line, raw: t.raw, done: t.done, cancelled: t.cancelled, title: t.title, due: t.due,
-      scheduled: t.scheduled, doneDate: t.doneDate, recurring: t.recurring,
+      scheduled: t.scheduled, doneDate: t.doneDate, recurring: t.recurring, created: t.created,
     };
   }
 
@@ -240,9 +339,62 @@ class ObsidianSync extends EventEmitter {
     return { ...list, conflict: res.conflict };
   }
 
+  _stampKey(created, title) { return `${created}|${String(title).trim()}`; }
+
+  _stamps() {
+    const v = this.store.get('taskStamps', {});
+    return v && typeof v === 'object' ? v : {};
+  }
+
+  _saveStamps(map) {
+    const keys = Object.keys(map);
+    if (keys.length > 3000) for (const k of keys.slice(0, keys.length - 3000)) delete map[k];
+    this.store.set('taskStamps', map);
+  }
+
+  _stampAdd(created, title, ts = Date.now()) {
+    const map = { ...this._stamps() };
+    const key = this._stampKey(created, title);
+    map[key] = [...(map[key] || []), ts].sort((a, b) => a - b);
+    this._saveStamps(map);
+  }
+
+  _stampMove(created, from, to) {
+    if (!created) return;
+    const map = { ...this._stamps() };
+    const oldKey = this._stampKey(created, from);
+    const list = map[oldKey] || [];
+    if (!list.length) return;
+    const ts = list.pop();
+    if (list.length) map[oldKey] = list; else delete map[oldKey];
+    if (to) map[this._stampKey(created, to)] = [...(map[this._stampKey(created, to)] || []), ts].sort((a, b) => a - b);
+    this._saveStamps(map);
+  }
+
   async addTask({ title, due }) {
     if (!title || !title.trim()) return this.listTasks();
-    const res = await this._mutateTasks(this.tasksFileObj(), (t) => md.appendTask(t, title, due || null));
+    const now = new Date();
+    const created = md.ymd(now);
+    const res = await this._mutateTasks(this.tasksFileObj(), (t) => md.appendTask(t, title, due || null, created));
+    if (!res.conflict) this._stampAdd(created, title, now.getTime());
+    return this._afterTaskChange(res);
+  }
+
+  async sortTasks(dir) {
+    const order = dir === 'desc' ? 'desc' : 'asc';
+    const res = await this._mutateTasks(this.tasksFileObj(), (text) => {
+      const stamps = this._stamps();
+      const used = new Map();
+      const rank = (task) => {
+        if (!task.created) return null;
+        const key = this._stampKey(task.created, task.title);
+        const n = used.get(key) || 0;
+        used.set(key, n + 1);
+        const ts = (stamps[key] || [])[n];
+        return ts ? `${task.created}T${String(ts).padStart(15, '0')}` : `${task.created}T`;
+      };
+      return md.sortTaskBlocks(text, rank, order);
+    });
     return this._afterTaskChange(res);
   }
 
@@ -257,8 +409,48 @@ class ObsidianSync extends EventEmitter {
   }
 
   toggleTask(ref) { return this._op(ref, (t, i) => md.toggleLine(t, i, md.ymd(new Date()))); }
-  editTask(ref, title) { return this._op(ref, (t, i) => (title.trim() ? md.editLine(t, i, title) : md.removeLine(t, i))); }
-  removeTask(ref) { return this._op(ref, (t, i) => md.removeLine(t, i)); }
+
+  async moveTask(ref, target, after = false) {
+    const res = await this._mutateTasks(this.tasksFileObj(), (text) => {
+      const { lines } = md.splitLines(text);
+      const from = md.locate(lines, ref.line, ref.raw);
+      const to = md.locate(lines, target.line, target.raw);
+      if (from < 0 || to < 0) return null;
+      return md.moveLine(text, from, to, !!after);
+    });
+    return this._afterTaskChange(res);
+  }
+  editTask(ref, title) {
+    return this._op(ref, (t, i) => {
+      const old = md.parseLine(md.splitLines(t).lines[i], i);
+      const next = title.trim() ? md.editLine(t, i, title) : md.removeLine(t, i);
+      if (next !== null && old && old.created) this._stampMove(old.created, old.title, title.trim());
+      return next;
+    });
+  }
+
+  removeTask(ref) {
+    return this._op(ref, (t, i) => {
+      const old = md.parseLine(md.splitLines(t).lines[i], i);
+      const next = md.removeLine(t, i);
+      if (next !== null && old && old.created) this._stampMove(old.created, old.title, null);
+      return next;
+    });
+  }
+
+  async removeAt({ file, line, raw }) {
+    if (!this.vault) return this._op({ line, raw }, (t, i) => md.removeLine(t, i));
+    if (!file) return { conflict: true };
+    const f = new DiskFile(this.abs(file));
+    const res = await this._mutateTasks(f, (text) => {
+      const { lines } = md.splitLines(text);
+      const idx = md.locate(lines, line, raw);
+      return idx < 0 ? null : md.removeLine(text, idx);
+    });
+    this.emit('tasks');
+    this.emit('index');
+    return res;
+  }
 
   async toggleAt({ file, line, raw }) {
     if (!this.vault) return this._op({ line, raw }, (t, i) => md.toggleLine(t, i, md.ymd(new Date())));
@@ -280,14 +472,14 @@ class ObsidianSync extends EventEmitter {
     if (f.abs) this.seen.set(f.abs, text === null ? '' : text);
     return {
       connected: !!this.vault, exists: text !== null, text: text || '',
-      file: this.vault ? this.relOf(f.abs) : null, mode: this.cfg.noteMode,
+      file: this.vault ? this.relOf(f.abs) : path.basename(f.abs), path: this.vault ? null : f.abs, mode: this.cfg.noteMode,
     };
   }
 
   async writeNote(text) {
     return this._serial(async () => {
       const f = this.noteFileObj();
-      if (f.abs && this.cfg.noteMode === 'daily' && (await f.read()) === null) await this._ensureDailyFile(new Date());
+      if (this.vault && this.cfg.noteMode === 'daily' && (await f.read()) === null) await this._ensureDailyFile(new Date());
       await this._write(f, text);
       this.emit('index');
       return { ok: true };
@@ -299,7 +491,7 @@ class ObsidianSync extends EventEmitter {
     if (!line) return { ok: false, empty: true };
     return this._serial(async () => {
       const f = this.noteFileObj();
-      if (f.abs && this.cfg.noteMode === 'daily' && (await f.read()) === null) await this._ensureDailyFile(new Date());
+      if (this.vault && this.cfg.noteMode === 'daily' && (await f.read()) === null) await this._ensureDailyFile(new Date());
       const cur = (await f.read()) || '';
       const eol = cur.includes('\r\n') ? '\r\n' : '\n';
       const sep = cur === '' || /\r?\n$/.test(cur) ? '' : eol;
@@ -360,7 +552,7 @@ class ObsidianSync extends EventEmitter {
     let local = null;
     if (!this.vault) {
       local = new Map();
-      const text = this.store.get('localTasksMd', null);
+      const text = readText(this.localTasksAbs());
       for (const it of md.dateTasks(typeof text === 'string' ? text : '')) {
         if (!local.has(it.date)) local.set(it.date, []);
         local.get(it.date).push({ file: null, line: it.line, raw: it.raw, title: it.title, done: it.done });
@@ -395,7 +587,9 @@ class ObsidianSync extends EventEmitter {
       const list = [...this._dirty];
       this._dirty.clear();
       if (!this.vault) return;
-      for (const a of list) await this._reindexFile(a);
+      let changed = !this.indexed;
+      for (const a of list) if (await this._reindexFile(a)) changed = true;
+      if (!changed) return;
       this._rebuildIndex();
       this.emit('index');
     }, 300);
@@ -403,15 +597,21 @@ class ObsidianSync extends EventEmitter {
 
   async _reindexFile(abs) {
     let rel;
-    try { rel = this.relOf(abs); } catch { return; }
-    if (!rel || rel.startsWith('..') || !/\.md$/i.test(rel)) return;
-    if (rel.split('/').some((p) => p.startsWith('.') || p === 'node_modules')) return;
+    try { rel = this.relOf(abs); } catch { return false; }
+    if (!rel || rel.startsWith('..') || !/\.md$/i.test(rel)) return false;
+    if (rel.split('/').some((p) => p.startsWith('.') || p === 'node_modules')) return false;
+    const prev = this.cache.get(rel);
     try {
       const st = await fsp.stat(abs);
-      if (!st.isFile() || st.size > 2e6) { this.cache.delete(rel); return; }
+      if (!st.isFile() || st.size > 2e6) { this.cache.delete(rel); return !!prev && prev.items.length > 0; }
       const text = await fsp.readFile(abs, 'utf8');
-      this.cache.set(rel, { mtimeMs: st.mtimeMs, size: st.size, items: md.dateTasks(text) });
-    } catch { this.cache.delete(rel); }
+      const items = md.dateTasks(text);
+      this.cache.set(rel, { mtimeMs: st.mtimeMs, size: st.size, items });
+      return !prev ? items.length > 0 : JSON.stringify(prev.items) !== JSON.stringify(items);
+    } catch {
+      this.cache.delete(rel);
+      return !!prev && prev.items.length > 0;
+    }
   }
 
   async scan() {
@@ -420,6 +620,7 @@ class ObsidianSync extends EventEmitter {
     this.scanning = true;
     try {
       const seen = new Set();
+      let changed = false;
       await this._walk(this.vault.path, '', async (abs, rel, st) => {
         seen.add(rel);
         const c = this.cache.get(rel);
@@ -427,10 +628,14 @@ class ObsidianSync extends EventEmitter {
         let text = '';
         try { text = await fsp.readFile(abs, 'utf8'); } catch { return; }
         this.cache.set(rel, { mtimeMs: st.mtimeMs, size: st.size, items: md.dateTasks(text) });
+        changed = true;
       });
-      for (const k of [...this.cache.keys()]) if (!seen.has(k)) this.cache.delete(k);
-      this._rebuildIndex();
-      this.emit('index');
+      for (const k of [...this.cache.keys()]) if (!seen.has(k)) { this.cache.delete(k); changed = true; }
+      if (changed || !this.indexed) {
+        this.indexed = true;
+        this._rebuildIndex();
+        this.emit('index');
+      }
     } catch (e) {
       this.error = e.message;
     } finally {
@@ -456,7 +661,7 @@ class ObsidianSync extends EventEmitter {
   }
 
   _watchTargets() {
-    if (!this.vault) return [];
+    if (!this.vault) return [{ abs: this.localTasksAbs(), kind: 'tasks' }, { abs: this.localNoteAbs(), kind: 'note' }];
     const out = [];
     try { out.push({ abs: this.abs(this.cfg.tasksFile), kind: 'tasks' }); } catch { }
     try {
@@ -470,7 +675,7 @@ class ObsidianSync extends EventEmitter {
     this._unwatchFiles();
     for (const { abs, kind } of this._watchTargets()) {
       this.watched.add(abs);
-      fs.watchFile(abs, { interval: 1000, persistent: false }, () => this._changed(abs, kind));
+      fs.watchFile(abs, { interval: 1500, persistent: false }, () => this._changed(abs, kind));
     }
   }
 
@@ -505,6 +710,7 @@ class ObsidianSync extends EventEmitter {
     if (this.seen.get(abs) === val) return;
     this.seen.set(abs, val);
     this.emit(kind);
+    if (!this.vault) this.emit('index');
     this._queueReindex(abs);
   }
 

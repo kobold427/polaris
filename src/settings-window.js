@@ -28,7 +28,7 @@ class SettingsWindow {
     });
     lockNavigation(this.win.webContents);
     this.win.on('closed', () => { this.win = null; });
-    this.load(tab || 'look');
+    this.load(tab || 'general');
   }
 
   load(tab) {
@@ -38,7 +38,7 @@ class SettingsWindow {
   reload() {
     if (!this.alive) return;
     const url = new URL(this.win.webContents.getURL());
-    this.load(url.searchParams.get('tab') || 'look');
+    this.load(url.searchParams.get('tab') || 'general');
   }
 
   send(channel, payload) {

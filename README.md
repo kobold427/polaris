@@ -10,7 +10,7 @@ Tasks, the note, the calendar and the pomodoro log work with an Obsidian vault t
 
 ### Prebuilt
 
-1. Open the [Releases](https://github.com/kobold427/polaris/releases) tab and download `Polaris-1.0.0-portable.exe`. It runs without installation. If you prefer an installer, take `Polaris-Setup-1.0.0.exe`.
+1. Open the [Releases](https://github.com/kobold427/polaris/releases) tab and download `Polaris-1.1.0-portable.exe`. It runs without installation. If you prefer an installer, take `Polaris-Setup-1.1.0.exe`.
 2. Run the file. It is not signed, so SmartScreen may warn about an unknown publisher. Click "More info", then "Run anyway".
 3. The widgets appear on the desktop and the Polaris icon appears in the notification area (it may be behind the "Show hidden icons" arrow). Right-click it to open the menu: settings, widget list, Obsidian connection, quit.
 
@@ -60,4 +60,4 @@ npm run dist
 
 The installer and the portable version appear in the `dist` folder. Build on Windows.
 
-A release is built automatically when a tag like `v1.0.0` appears in the repository.
+A release is built automatically when a tag like `v1.1.0` appears in the repository.

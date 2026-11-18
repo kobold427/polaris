@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Quick Capture</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { background: transparent; overflow: hidden; }
+  body { padding: 0; -webkit-user-select: none; }
+  .cap { position: absolute; left: 16px; right: 16px; top: 12px; padding: 14px 16px 12px; border-radius: 18px; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 14px 40px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .18); }
+  .cap .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cap .top .ttl { font-size: 12px; font-weight: 600; color: var(--fg2); letter-spacing: .02em; }
+  .cap input { width: 100%; padding: 10px 12px; font-size: 17px; border-radius: 11px; background: var(--fill); color: var(--fg); -webkit-user-select: text; user-select: text; }
+  .cap input:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 0; }
+  .cap .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 18px; margin-top: 9px; font-size: 11.5px; color: var(--fg2); }
+  .cap .line .due { color: var(--accent); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cap .line .ok { color: var(--green); font-weight: 600; }
+  .cap .line .bad { color: var(--red); font-weight: 600; }
+  .cap .line kbd { font: inherit; padding: 0 5px; border-radius: 5px; background: var(--fill); }
+  .cap.busy { opacity: .7; }
+</style>
+</head>
+<body>
+<div class="cap" id="cap"></div>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="../shared/taskinput.js"></script>
+<script src="common.js"></script>
+<script src="capture.js"></script>
+</body>
+</html>

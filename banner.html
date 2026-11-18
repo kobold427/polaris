@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Pomodoro</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  html, body { background: transparent; overflow: hidden; }
+  body { padding: 0; -webkit-user-select: none; cursor: default; }
+  .bn { position: absolute; left: 16px; right: 16px; top: 8px; padding: 14px 16px 16px; border-radius: 18px; overflow: hidden; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 14px 40px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .18); animation: in .22s cubic-bezier(.2, .8, .2, 1); }
+  @keyframes in { from { opacity: 0; transform: translateY(-10px) scale(.98); } to { opacity: 1; transform: none; } }
+  .bn .ttl { font-size: 15px; font-weight: 650; color: var(--fg); }
+  .bn .ttl, .bn .txt, .bn .extra { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bn .txt { margin-top: 2px; font-size: 13px; color: var(--fg2); }
+  .bn .extra { margin-top: 3px; font-size: 12.5px; font-weight: 600; color: var(--green); }
+  .bn .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; }
+  .bn button { padding: 6px 14px; border-radius: 9px; font-size: 13px; font-weight: 600; background: var(--fill); color: var(--fg); }
+  .bn button:hover { background: var(--fill2); }
+  .bn button.go { background: var(--accent); color: var(--on-accent); }
+  .bn button.go:hover { filter: brightness(1.08); }
+  .bn .prog { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--accent); opacity: .55; transform-origin: left; animation: shrink linear forwards; }
+  @keyframes shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+  @media (prefers-reduced-motion: reduce) { .bn { animation: none; } }
+</style>
+</head>
+<body>
+<div class="bn" id="bn"></div>
+<script src="../shared/lang-ru.js"></script>
+<script src="../shared/i18n.js"></script>
+<script src="common.js"></script>
+<script src="banner.js"></script>
+</body>
+</html>
